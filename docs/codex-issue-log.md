@@ -210,4 +210,5 @@
 
 - `chemlabagent.xmu.edu.cn` 已解析到 `219.229.81.240` 和 `2001:da8:e800:251c::240`，公网 HTTPS NIP-11 返回 Buzz Relay `0.2.1`，说明 DNS、TLS 和普通 HTTP 反代均已生效。
 - 标准 WebSocket 客户端仍以异常关闭码 `1006` 失败。使用完全相同的 HTTP/1.1 Upgrade 请求对比：公网 `chemlabagent.xmu.edu.cn:443` 返回 `HTTP/1.1 200 OK`，内网源站 `10.24.11.82:3000` 返回 `HTTP/1.1 101 Switching Protocols`。
-- 结论：Buzz Relay 与源站 Caddy 路径正常；剩余故障位于学校公网反代，需启用并透传 WebSocket `Upgrade`/`Connection` 请求头。修复后用 `check-relay-edge.mjs --expected-ip 219.229.81.240` 复验。
+- 在 `.82` 的 80 端口抓包确认，学校网关源地址 `219.229.81.241` 转发来的请求保留了 `Host`、`Sec-WebSocket-Key` 和 `Sec-WebSocket-Version`，但已经删除 `Upgrade: websocket` 与 `Connection: Upgrade`。因此 Caddy 只能把它当普通 NIP-11 GET 并返回 200。
+- 在服务器本机向 Caddy `127.0.0.1:80` 发送完整的同一组头时，Caddy 返回 `HTTP/1.1 101 Switching Protocols`，进一步排除 Caddy 和 Buzz Relay。结论：剩余故障位于学校公网应用网关，需启用 HTTP/1.1 WebSocket 并显式透传 `Upgrade`/`Connection` 请求头。修复后用 `check-relay-edge.mjs --expected-ip 219.229.81.240` 复验。
