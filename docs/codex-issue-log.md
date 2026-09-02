@@ -212,3 +212,12 @@
 - 标准 WebSocket 客户端仍以异常关闭码 `1006` 失败。使用完全相同的 HTTP/1.1 Upgrade 请求对比：公网 `chemlabagent.xmu.edu.cn:443` 返回 `HTTP/1.1 200 OK`，内网源站 `10.24.11.82:3000` 返回 `HTTP/1.1 101 Switching Protocols`。
 - 在 `.82` 的 80 端口抓包确认，学校网关源地址 `219.229.81.241` 转发来的请求保留了 `Host`、`Sec-WebSocket-Key` 和 `Sec-WebSocket-Version`，但已经删除 `Upgrade: websocket` 与 `Connection: Upgrade`。因此 Caddy 只能把它当普通 NIP-11 GET 并返回 200。
 - 在服务器本机向 Caddy `127.0.0.1:80` 发送完整的同一组头时，Caddy 返回 `HTTP/1.1 101 Switching Protocols`，进一步排除 Caddy 和 Buzz Relay。结论：剩余故障位于学校公网应用网关，需启用 HTTP/1.1 WebSocket 并显式透传 `Upgrade`/`Connection` 请求头。修复后用 `check-relay-edge.mjs --expected-ip 219.229.81.240` 复验。
+
+## 2026-09-02：校内 50 人 Buzz 容量基线评估
+
+- 需求：估算 `.82` 同时承载约 50 名校内用户时是否会压满网络，并测量当前客户端到服务器的实际双向吞吐。
+- 定位：服务器 `ens1f3` 为 1 Gbps 全双工，192 核、251 GiB 内存、双 7 TB NVMe，Buzz Relay 当前约 1.1% CPU；15 秒空闲采样 RX/TX 分别为 0.017/0.166 Mbps，丢包增量为 0，驱动队列无错误或丢包。当前测试客户端 Wi-Fi 仅协商到 104 Mbps，因此端到端结果代表该客户端路径，不是服务器网卡上限。
+- 处理：用无压缩 SSH/SCP 做 16 MiB 双向样本各两次；客户端到服务器为 14.8–17.3 Mbps，服务器到客户端为 40.6–42.0 Mbps。另新增 31 个只握手、不写数据库的 WebSocket，使总连接量约为 50，31/31 握手成功、0 失败。
+- 验证：约 50 条连接期间 Relay CPU 仍为 1.1%，RSS 仅增加约 5 MiB；当前 17–19 条活跃连接下，HTTP query 平均约 14 ms，97% 在 50 ms 内，媒体下载服务端处理平均约 28 ms。测试临时文件已从本机和服务器清理。
+- 风险：当前 Relay 使用 debug 构建；MinIO 容器内存上限仅 256 MiB，稳定占用约 182–191 MiB，虽无 OOM/重启但媒体并发余量偏小。50 人文字聊天足够，集中图片/视频下载才可能首先触发网卡或 MinIO 瓶颈；正式放量前建议改 release 构建并将 MinIO 上限提高到至少 1 GiB。
+- 版本/提交：运行时 Buzz Relay `0.2.1`；诊断记录待提交。
