@@ -90,6 +90,8 @@ jobs:
         run: scripts/test-mobile-worktree-overrides.sh
       - name: File size ratchet unit tests
         run: node --test scripts/check-file-sizes-core.test.mjs
+      - name: Public relay edge probe unit tests
+        run: node --test scripts/check-relay-edge.test.mjs
 
   rust-lint:
     name: Rust Lint

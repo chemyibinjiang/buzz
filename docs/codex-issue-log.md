@@ -197,3 +197,11 @@
 - 处理：新增明确的公开 `EVENT_LOOKUP_KINDS` 集合，覆盖可作为线程根/父事件的公开类型，同时排除 recipient-gated、author-only 和其他受限事件，避免放宽 relay 访问边界；Inbox 上下文加载现在监听 relay 连接状态，非 `connected` 阶段的失败不再显示为持久错误，并会在连接认证成功后重新 hydration。
 - 验证：新增 Rust 单元测试锁定关键公开 kind 均可查找且 lookup filter 不含 p-gated kind；消息命令测试 13/13、Inbox 辅助测试 23/23、桌面 TypeScript、Biome、E2E 构建和本次文件 rustfmt 检查通过。全量桌面测试共 4,883 个用例，其中 4,882 个通过、1 个与本次改动无关的既有失败。
 - 版本/提交：待提交。
+
+## 2026-09-02：公网 HTTPS 可访问但 Buzz WSS 仍不可用
+
+- 现象：学校反代 IPv4 可通过域名 SNI 返回 Buzz NIP-11 `200 OK`，但同一入口的 WebSocket Upgrade 仍返回普通 HTTP 200；公开 DNS 同时尚未指向该反代节点。仅检查网页会误判部署已经可用。
+- 定位：Buzz 的 Community 身份必须保持为稳定域名，反代 IPv4 只是可迁移的网络边缘，不能写入客户端 Community URL。公网验收还缺少同时覆盖 DNS、HTTPS/NIP-11 和 WSS 101 的自动门禁。
+- 处理：新增 `scripts/check-relay-edge.mjs`，支持在 DNS 发布前用 `--connect-ip` 保留 TLS SNI/Host 验证指定边缘节点，并在发布后用 `--expected-ip` 校验解析结果；探针要求 HTTPS 返回 Buzz NIP-11 且 WSS 完成 RFC 6455 握手。补充通用反代、LAN transport、Community 迁移和 `/labservices/` 路由说明。
+- 验证：Node 单元测试 6/6、Desktop canonical/LAN/media 相关测试 34/34 通过。强制连接 `219.229.81.240` 时，探针确认 Buzz NIP-11 通过，但 WSS 返回 HTTP 200 并明确诊断 Upgrade 未转发；发布后门禁确认当前 DNS 仍解析到 `210.34.0.61` 和 `2001:da8:e800::61`，不含预期边缘 IPv4。原生 Rust/Flutter 额外复跑受本机 Windows Hermit 激活兼容问题阻塞，本次未改客户端代码。
+- 版本/提交：`codex/public-relay-cutover`，待提交。
