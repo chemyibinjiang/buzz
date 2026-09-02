@@ -205,3 +205,9 @@
 - 处理：新增 `scripts/check-relay-edge.mjs`，支持在 DNS 发布前用 `--connect-ip` 保留 TLS SNI/Host 验证指定边缘节点，并在发布后用 `--expected-ip` 校验解析结果；探针要求 HTTPS 返回 Buzz NIP-11 且 WSS 完成 RFC 6455 握手。补充通用反代、LAN transport、Community 迁移和 `/labservices/` 路由说明。
 - 验证：Node 单元测试 6/6、Desktop canonical/LAN/media 相关测试 34/34 通过。强制连接 `219.229.81.240` 时，探针确认 Buzz NIP-11 通过，但 WSS 返回 HTTP 200 并明确诊断 Upgrade 未转发；发布后门禁确认当前 DNS 仍解析到 `210.34.0.61` 和 `2001:da8:e800::61`，不含预期边缘 IPv4。原生 Rust/Flutter 额外复跑受本机 Windows Hermit 激活兼容问题阻塞，本次未改客户端代码。
 - 版本/提交：`codex/public-relay-cutover`，待提交。
+
+### 追加验证：公网 DNS 已发布，WebSocket 转发仍缺失
+
+- `chemlabagent.xmu.edu.cn` 已解析到 `219.229.81.240` 和 `2001:da8:e800:251c::240`，公网 HTTPS NIP-11 返回 Buzz Relay `0.2.1`，说明 DNS、TLS 和普通 HTTP 反代均已生效。
+- 标准 WebSocket 客户端仍以异常关闭码 `1006` 失败。使用完全相同的 HTTP/1.1 Upgrade 请求对比：公网 `chemlabagent.xmu.edu.cn:443` 返回 `HTTP/1.1 200 OK`，内网源站 `10.24.11.82:3000` 返回 `HTTP/1.1 101 Switching Protocols`。
+- 结论：Buzz Relay 与源站 Caddy 路径正常；剩余故障位于学校公网反代，需启用并透传 WebSocket `Upgrade`/`Connection` 请求头。修复后用 `check-relay-edge.mjs --expected-ip 219.229.81.240` 复验。
