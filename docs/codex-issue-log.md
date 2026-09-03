@@ -197,3 +197,91 @@
 - 处理：新增明确的公开 `EVENT_LOOKUP_KINDS` 集合，覆盖可作为线程根/父事件的公开类型，同时排除 recipient-gated、author-only 和其他受限事件，避免放宽 relay 访问边界；Inbox 上下文加载现在监听 relay 连接状态，非 `connected` 阶段的失败不再显示为持久错误，并会在连接认证成功后重新 hydration。
 - 验证：新增 Rust 单元测试锁定关键公开 kind 均可查找且 lookup filter 不含 p-gated kind；消息命令测试 13/13、Inbox 辅助测试 23/23、桌面 TypeScript、Biome、E2E 构建和本次文件 rustfmt 检查通过。全量桌面测试共 4,883 个用例，其中 4,882 个通过、1 个与本次改动无关的既有失败。
 - 版本/提交：待提交。
+
+## 2026-09-02：Buzz 无法直接挂载到共享域名子路径
+
+- 现象：学校只能提供一个指向 443 端口的域名；Buzz 当前需要占用该域名的根路径，无法直接配置为 `https://example.edu.cn/buzz`，因此不便与同一域名下的其他服务共存。
+- 定位：Relay URL 同时承担 WebSocket 地址、NIP-42/NIP-98 签名身份和 HTTP API 基址。Relay 的 NIP-42 校验当前按 `scheme://host` 重建签名 URL，Mobile 的 `/query`、`/upload` 等请求使用根路径解析，CLI/ACP 和媒体安全检查也假设 `/query`、`/events`、`/media` 位于根路径。仅在 Caddy 使用 `handle_path /buzz/*` 会造成路由可达但认证 URL 或媒体路径不一致。
+- 处理：当前移动端 PR 不混入该跨协议改造。短期方案是在同一个 443 虚拟主机中，按根路径 WebSocket Upgrade 和 Buzz 已知 API/媒体/邀请路径转发到 relay，其余请求转发到其他服务；Buzz 仍使用根 canonical URL，但不再独占整个端口。真正的可配置 base path 作为独立后续 PR，统一修改 Relay、Desktop、Mobile、CLI、ACP、媒体和邀请链接。
+- 验证：已检查 Relay Axum 路由、NIP-42 URL 重建、Mobile HTTP/media URL 解析、CLI/ACP bridge 与媒体路径校验，确认当前版本没有端到端 base-path 支持；共享 443 分流方案尚需结合实际域名和同机其他服务进行 Caddy 配置验证。
+- 版本/提交：基于 `047c8141`；后续 base-path PR 待创建。
+
+## 2026-09-02：校园反向代理域名已生效但尚未回源到 Buzz
+
+- 现象：学校工单显示 `chemlabagent.xmu.edu.cn` 的备案、DNS 和反向代理配置已完成，用户询问是否已经获得公网 IP。
+- 定位：这不是把公网地址直接绑定到 `10.24.11.82`，而是由学校公网反向代理接收请求后通过 HTTP 80 回源。公网 DNS 当前为 `chemlabagent.xmu.edu.cn CNAME beianban.xmu.edu.cn`，解析到 `210.34.0.61` 和 `2001:da8:e800::61`；工单中的 `219.229.81.240/30` 是源站防火墙需要放行的反向代理来源网段。公网 HTTP/HTTPS 请求均已到达备案网关，但返回 Apache `400` 故障页。源站 `10.24.11.82:80` 和 `:3000` 均可连接，`:80` 的 Caddy 只返回空 `200`，Buzz relay 位于 `:3000` 并正常返回 NIP-11 信息。
+- 处理：尚未修改源站。下一步应让 Caddy 在 HTTP 80 上将 `chemlabagent.xmu.edu.cn`（含 WebSocket Upgrade、HTTP API 和媒体路径）反向代理到 `127.0.0.1:3000`，放行来自 `219.229.81.240/30` 的 80 端口访问，并遵守学校要求：源站不启用 HTTP/2、不将 80 重定向到 443。外部客户端使用 `https://`/`wss://chemlabagent.xmu.edu.cn`，TLS 由学校网关终止。
+- 验证：公网入口连通时间约 50–60 ms，但当前状态码为 `400`；源站直连 `:3000` 返回 `200`，版本 `0.2.1`。完成 Caddy 和防火墙配置后需重新验证 HTTPS、WSS、NIP-42、媒体上传下载和历史社区身份迁移。
+- 版本/提交：仅诊断和记录，未创建代码提交。
+
+### 追加处理与验证
+
+- Caddy 已改为在专用的 HTTP `:80` 入口将整站请求反代到 `127.0.0.1:3000`，因此同时覆盖 WebSocket、NIP-11、事件查询/发布、媒体、邀请、Git HTTP 和 webhook；配置明确不启用源站 TLS，也不把 80 重定向到 443。原配置已备份为 `/etc/caddy/Caddyfile.bak-20260902-chemlabagent`，中间版本备份为 `/etc/caddy/Caddyfile.bak-20260902-host-routing`。
+- 将 `chemlabagent.xmu.edu.cn` 写入 `community_host_aliases`，映射到历史 ngrok 社区 `0a3b5be4-3092-4ac9-99a7-be8de0892bcb`，没有创建新社区；随后把 relay 持久化环境中的 `RELAY_URL` 与 `BUZZ_RELAY_URL` 更新为 `wss://chemlabagent.xmu.edu.cn` 并重启 `hl` 用户的 `buzz-relay.service`。旧 ngrok service 暂时保持 active，作为学校入口恢复前的回退。
+- 源站使用新域名 Host、旧 ngrok Host 和内网 IP Host 均返回 HTTP 200；经 Caddy 的 WebSocket 握手返回 `101 Switching Protocols` 并收到 NIP-42 `AUTH` challenge。重启后的 relay 进程已加载新 canonical URL，旧 ngrok 公网入口仍返回 200。
+- 学校公网 IPv4 `210.34.0.61` 与 IPv6 `2001:da8:e800::61` 仍返回 Apache 400。短时抓包显示公网请求未从学校反代回到 `.82`，而随后内网直连请求正常到达；UFW 当前已允许 80 入站，因此剩余问题在学校反代配置下发或网关侧回源链路，不在 Buzz/Caddy。待学校入口返回 Buzz NIP-11 后，再验证公网 WSS、认证和媒体，并停用旧 ngrok 回退。
+
+### ngrok 退役与主社区迁移
+
+- 用户确认不再保留 ngrok。迁移检查发现 relay 首次以新 `RELAY_URL` 重启时，在既有 alias 之外自动创建了一个 `chemlabagent.xmu.edu.cn` 空壳社区 `f45a5eae-96b9-47b9-af6c-60f2be349000`；它只有 1 条自动 owner membership，没有事件、频道、用户、审计或邀请数据。保护性 SQL 前置条件两次阻止了不完整迁移，所有失败事务均整体回滚。
+- 在验证空壳无业务数据后，显式删除其 owner membership 和 community 行；将历史社区 `0a3b5be4-3092-4ac9-99a7-be8de0892bcb` 的主 Host 从 `fairy-sigilistic-elizbeth.ngrok-free.dev` 更新为 `chemlabagent.xmu.edu.cn`，并删除 `fairy-sigilistic-elizbeth.ngrok-free.dev`、`content-swift-seemingly.ngrok-free.app` 相关映射。内网和旧公网 IP aliases 保持不变。
+- 重启 relay 后新域名和 `10.24.11.82` 均返回 200，两个 ngrok Host 均返回 404；历史社区仍有 2928 条事件。随后停止并禁用 Buzz 的 system/user ngrok services，删除 `/etc/systemd/system/ngrok-buzz.service` 与 `/home/hl/.config/systemd/user/buzz-ngrok.service`，确认无 ngrok 进程或残留 unit。全局 `/usr/local/bin/ngrok` 未删除，避免影响机器上其他潜在用途。
+- 学校公网入口仍为 Apache 400，因此 ngrok 退役后校外 Buzz 暂不可用，需网络中心修复反代回源后恢复；内网 relay 不受影响。
+
+### 源站反代白名单
+
+- 按学校反代通知，将 UFW 的 `80/tcp Anywhere` 和对应 IPv6 广泛放行删除；新增 `219.229.81.240/30 -> 80/tcp` 的学校反代白名单，并保留 `10.24.11.64/26 -> 80/tcp` 供源站内网维护。UFW 默认入站策略继续为 deny。
+- Caddy 本机回源验证仍返回 200；纯 HTTP 80 没有 TLS、HTTP/2 或 80 到 443 跳转。公网 IPv4/IPv6 复测仍返回学校 Apache 400，进一步确认剩余问题不在源站防火墙。
+- `3000/tcp` 仍用于 Buzz 的校园网直连和 LAN fast path，不属于学校反代入口；在确认所有客户端已能通过新公网域名稳定回退前暂不收紧。服务器上的 `19030`、`8787`、`8788` 属于其他服务，本次没有修改。
+
+## 2026-09-02：网站未认证导致公网 DNS 未切换到反代平台
+
+- 现象：备案管理页面中项目 2389 显示“未认证”；正常访问 `chemlabagent.xmu.edu.cn` 仍进入学校 Apache 400 页面，用户询问是否需要完成认证。
+- 定位：厦大权威 DNS `ns1.xmu.edu.cn` 和 `ns2.xmu.edu.cn` 均仍返回 `chemlabagent.xmu.edu.cn CNAME beianban.xmu.edu.cn`，最终为 `210.34.0.61`/`2001:da8:e800::61`。强制将同一域名解析到工单中的反代 IP `219.229.81.240` 时，HTTP 返回 302、HTTPS 使用有效证书返回 Buzz NIP-11 200，证明反代后端和源站已经接通；未认证备案状态与尚未执行的正式 DNS 切换一致。
+- 处理：需要按页面说明下载备案 PDF，并在 OA 的“流程管理 → 发起流程 → 信息网络服务 → 网站备案审批流程”提交认证；同时明确勾选或填写需要开放校外访问。认证完成后应由网络中心将权威 DNS 从 `beianban.xmu.edu.cn` 切到反代平台，而不是由源站管理员把公网 DNS 直接指向 `10.24.11.82`。
+- 验证：强制解析到 `219.229.81.240` 的 HTTPS/NIP-11 已返回 200；但同一路径的 WebSocket Upgrade 当前返回普通 NIP-11 200 而不是 101，说明学校反代还需确认启用并透传 WebSocket `Upgrade`。完成认证和 DNS 切换后必须复测 WSS/NIP-42。
+- 版本/提交：仅诊断和记录，未创建代码提交。
+
+### 审批通过后复测
+
+- OA 流程截图显示备案管理员审核、网站群反代管理员审核和 DNS 配置均已通过，但厦大权威 DNS 及 `1.1.1.1`、`223.5.5.5` 仍一致返回旧备案页 CNAME；正常 HTTPS 和 WebSocket 请求继续得到 Apache 400。当前活动 DNS 服务器也返回相同结果，排除单机缓存。
+- 结论：流程状态已完成，但公网权威 DNS 视图尚未实际发布，或 DNS 管理员只配置了校内 `A 10.24.11.82` 视图。需请 DNS 配置处理人核查公网记录并将其指向反代平台 `219.229.81.240`；完成后仍需单独启用 WebSocket Upgrade。
+
+## 2026-09-02：同域名 `/services/*` 路由冲突审计
+
+- 现象：用户希望在 Buzz 占用根域名的同时，通过 Caddy 将 `/services/<name>/` 分配给其他服务，并确认该前缀是否与 Buzz 冲突。
+- 定位：扫描 Relay、媒体、Git、邀请、管理后台和 Web SPA 路由后，没有发现 `/services` 路由或字面路径。Buzz 当前占用的顶层命名空间包括根 WebSocket/NIP-11、`/.well-known`、`/info`、`/health`、`/_*`、`/events`、`/query`、`/count`、`/upload`、`/media`、`/api`、`/operator`、`/moderation`、`/workflows`、`/hooks`、`/huddle`、`/git`、`/internal`、`/invite`、`/repos`、`/reports`、`/feedback` 和 `/assets`。SPA fallback 只接管邀请页及可选 Git Web 页面，任意 `/services/...` 在 Relay 内会返回 404。
+- 处理：确认 `/services/<service>/` 可作为 Caddy 保留命名空间。应在 Buzz 的 catch-all 反代之前使用 `handle_path /services/<service>/*`，其他请求继续交给 `127.0.0.1:3000`。新增服务仍需正确处理被剥离的前缀、静态资源绝对路径、Cookie Path、OAuth 回调、重定向和自身 WebSocket 路径。
+- 验证：仓库级 `rg` 路由审计未发现 `/services`、`/labservice` 或 `/labservices` 冲突；尚未在生产 Caddy 中添加具体服务路由。为降低与通用或未来标准路径发生冲突的概率，后续实验室托管服务优先使用复数命名空间 `/labservices/<service>/`。
+- 版本/提交：仅诊断和记录，未创建代码提交。
+
+## 2026-09-03：`.82` 上 Buzz 的 50 并发下载容量基线
+
+- 现象：用户计划约 50 人使用 Buzz，需要确认同时下载附件是否会压垮 `10.24.11.82`，以及大文件是否应迁移到 Aliya。
+- 定位：`.82` 有 192 个逻辑 CPU、251 GiB 内存、约 14 TB NVMe，Buzz debug relay 常驻约 190 MiB；活动网卡 `ens1f3` 为 1 Gbps。媒体当前存放在 `.82` 本机 `/data` 上的 MinIO，完整下载由 relay 从 S3 流式转发，Range 请求单块上限 16 MiB。服务器资源不是首要瓶颈，实际限制是客户端接入、校园网和学校公网反代路径。
+- 处理：使用 relay 的 874,814 B 公共 Web bundle 做无状态阶梯压测，避免写入数据库或媒体桶；分别从当前电脑、Aliya 和 `.82` 本机测试公网、校园网直连与源站回环。50 并发测试完成后未继续扩大压力；`.82` 经公网反代回环进入 50 并发时 SSH 管理连接曾被重置，随即确认 Caddy、relay、SSH 和公网入口均保持健康。
+- 验证：`.82` 本机回环 50 并发约 4.82 Gbps；当前电脑经 `10.24.11.82:3000` 直连 50 并发为 88.12 Mbps；当前电脑经公网域名 50 并发三轮均无 HTTP 失败，总吞吐 32.26–40.18 Mbps；Aliya 作为第二客户端经公网 50 并发无失败并达到 86.80 Mbps，已等于该机器 86.7 Mbps Wi-Fi 链路上限。结果证明 50 个小附件并发不会压垮 Buzz，但不能据此承诺 50 个大文件的下载时延。
+- 结论：常规图片和小附件继续使用 `.82` 本机 MinIO。Aliya 当前经 Wi-Fi 接入且上限约 86.7 Mbps，不适合作为大文件分流节点；仅把 S3 后端搬到 Aliya还会增加一跳，公网文件仍经过 `.82`/学校反代，不能卸载出口。若需要稳定分发几十至数百 MB 文件，应采用具备独立 HTTPS 地址的对象存储/CDN，并通过短期签名 URL 保持 Buzz 授权；在此之前建议对单文件大小、并发下载和每用户速率设置保守上限。
+- 版本/提交：部署基线为 `.82` 上 `/home/hl/workplace/buzz/target/debug/buzz-relay`；本次仅压测和记录，未创建代码提交。
+
+### Aliya 链路校正
+
+- 首次读取 Aliya 网卡时，远程 PowerShell 命令受到本地变量与引号展开干扰，得到的 `86.7 Mbps Wi-Fi` 归因不可靠。重新使用 UTF-16LE EncodedCommand 读取实时状态后，确认 Aliya 的 `以太网 3` 为 Up、协商速率 1 Gbps，IPv4 为 `192.168.1.56`，默认路由经 `192.168.1.1`；Wi-Fi 当前为 Disconnected。
+- 再次执行公网 50 并发下载，`Test-NetConnection` 选择 `以太网 3` 到 `219.229.81.240:443`。测试期间有线网卡接收增加 48,106,040 B、Wi-Fi 增量为 0，总吞吐 85.85 Mbps。因此该结果不是 Aliya Wi-Fi 上限，更可能是学校公网反代、源站回源路径或约 100 Mbps 的中间链路限制。
+- 修正结论：不能依据本轮结果排除 Aliya 作为独立大文件节点，但也尚未证明它具备更高公网出口。需要在 Aliya 上提供一个临时大文件 HTTPS 端点，并从至少两台校外机器直接下载，测量其真实出站带宽；只有客户端绕过 `.82` 和学校 Buzz 反代时，Aliya 分流才有容量收益。
+
+## 2026-09-03：学校公网反代 WebSocket 恢复
+
+- 现象：用户确认网络中心可能已修复 WebSocket，需要验证 `wss://chemlabagent.xmu.edu.cn` 是否真正支持 Upgrade 和 Buzz NIP-42。
+- 定位：公网 DNS 当前指向 `applg219.xmu.edu.cn` / `219.229.81.240`。此前公网入口只能返回普通 HTTP/NIP-11，无法完成 Upgrade；本次公网 ClientWebSocket 已成功进入 Open 并收到 relay 的 `["AUTH", challenge]`。
+- 处理：从当前电脑分别连接公网 WSS 与校园网 `ws://10.24.11.82:3000` 并读取首帧；随后对公网进行 10 次短连接稳定性测试。
+- 验证：公网首次连接约 53.5 ms，内网约 9.8 ms，首帧均为 NIP-42 AUTH challenge；公网 10/10 成功，连接与首帧耗时最小 19.4 ms、平均 36.5 ms、最大 123.7 ms。说明学校反代已透传 WebSocket Upgrade。尚未使用成员私钥完成 NIP-42 签名、订阅、发布闭环。
+- 版本/提交：线上 `.82` 部署验证；仅诊断和记录，未创建代码提交。
+
+## 2026-09-03：移植 Block 上游的身份恢复与 Profile 查询韧性修复
+
+- 现象：审计 `block/buzz` 最新主线时，需要筛选可安全移植到当前分支、并能改善身份丢失和头像/名称偶发加载失败的修复。
+- 定位：当前 `recover_from_keyring` 在检查备用 `identity.key` 和迁移标记前就删除无法解析的 keyring 值；对仅有迁移标记而没有备用文件的安装，这会销毁最后一份身份材料。`useUsersBatchQuery` 同时沿用全局单次重试策略，短暂 relay 失败后可能长期保留原始公钥、缺失头像或损坏的 mention 展示。
+- 处理：按 Block 上游 `e5a7e26a1` 调整身份恢复顺序，先尝试有效文件恢复；存在迁移标记但无法恢复时进入 `Lost` 且保留 keyring 值，仅在无标记的首次启动路径中清理并生成新身份。按上游 `6f6093243` 为 profile 批量查询增加 3 次指数退避，并只在查询已处于 error 时随窗口重新聚焦而重试。
+- 验证：`app_state::` 定向 Rust 测试 50/50 通过，新增 profile 韧性测试 2/2 通过，`pnpm typecheck` 与 `cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all` 通过；仓库 `just desktop-tauri-fmt` 仅因当前 PowerShell 环境找不到 `sh` 未能启动，其内部相同的 cargo fmt 命令已直接执行成功。
+- 版本/提交：基于 `19902806e`，参考 Block 上游 `e5a7e26a1` 与 `6f6093243`；本地待提交。

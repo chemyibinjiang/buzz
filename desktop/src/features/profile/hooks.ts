@@ -383,6 +383,12 @@ export function useUsersBatchQuery(
       ),
     staleTime: 60_000,
     gcTime: 5 * 60 * 1_000,
+    // Cold profile batches are required to render names, mentions, and avatars.
+    // Recover from transient relay slowness without refetching healthy batches
+    // whenever the window regains focus.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 30_000),
+    refetchOnWindowFocus: (batchQuery) => batchQuery.state.status === "error",
   });
 
   // Seed individual "user-profile" cache entries so avatar clicks are instant

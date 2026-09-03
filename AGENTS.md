@@ -541,7 +541,9 @@ The mobile app lives in `mobile/` — a Flutter app using Riverpod + Hooks.
   stay in sync with `desktop/src/shared/constants/kinds.ts`
 
 ### Rules
-
+-  Agents may run `just mobile-build-android` to produce an unsigned debug APK
+  when the user explicitly requests local Android device testing. Continue to
+  prohibit `flutter run`, `flutter clean`, `flutter upgrade`, and release builds.
 - **NEVER use `StatefulWidget`** — favor Riverpod for state and always use
   `HookConsumerWidget` or `ConsumerWidget` with `flutter_hooks` for local state.
 - **NEVER run `flutter run`, `flutter build`, `flutter clean`, or
