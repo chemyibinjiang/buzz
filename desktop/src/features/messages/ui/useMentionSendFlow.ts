@@ -35,6 +35,7 @@ import type { UseDraftsResult } from "@/features/messages/lib/useDrafts";
 import { invokeTauri } from "@/shared/api/tauri";
 import type { CustomEmoji } from "@/shared/lib/remarkCustomEmoji";
 import type { AcpRuntime, ChannelType, ManagedAgent } from "@/shared/api/types";
+import type { AgentDispatchMode } from "./MessageComposer.types";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { buildCustomEmojiTags } from "@/shared/lib/customEmojiTags";
 import {
@@ -69,6 +70,7 @@ type UseMentionSendFlowOptions = {
         parentEventId: string | null;
         threadHeadId: string | null;
       } | null,
+      agentDispatchMode?: AgentDispatchMode,
     ) => Promise<void>
   >;
   richText: Pick<
@@ -571,6 +573,7 @@ export function useMentionSendFlow({
             finalOutgoingTags,
             sendChannelId,
             draft.capturedThreadContext,
+            draft.agentDispatchMode,
           );
           if (signal?.aborted) return;
           if (revalidatedExplicitAgentPubkeys.length > 0) {
@@ -713,6 +716,7 @@ export function useMentionSendFlow({
 
   const sendMessageWithMentionFlow = React.useCallback(
     async ({
+      agentDispatchMode,
       capturedChannelId,
       capturedThreadContext = null,
       pendingImeta,
@@ -804,6 +808,7 @@ export function useMentionSendFlow({
         }
 
         const pendingDraft: PendingNonMemberMentionSend = {
+          agentDispatchMode,
           capturedChannelId: effectiveChannelId,
           capturedThreadContext,
           trimmed,

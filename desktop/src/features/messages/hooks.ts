@@ -55,6 +55,7 @@ import {
 } from "@/shared/api/tauri";
 import { getChannelWindowEvents } from "@/shared/api/channelWindow";
 import type { Channel, Identity, RelayEvent } from "@/shared/api/types";
+import type { AgentDispatchMode } from "@/features/messages/ui/MessageComposer.types";
 // Same .mjs the renderer uses, so the cache-update projection can't drift
 // from the on-render overlay.
 import { applyEditTagOverlay } from "@/features/messages/lib/applyEditTagOverlay.mjs";
@@ -106,6 +107,7 @@ export function createOptimisticMessage(
   mediaTags: string[][] = [],
   sentFromThreadRootId: string | null = null,
   sentFromThreadRootExcerpt: string | null = null,
+  agentDispatchMode?: AgentDispatchMode,
 ): RelayEvent {
   const localKey = `optimistic-${crypto.randomUUID()}`;
   const tags: string[][] = [];
@@ -138,6 +140,9 @@ export function createOptimisticMessage(
     tags.push(
       buildSentFromThreadTag(sentFromThreadRootId, sentFromThreadRootExcerpt),
     );
+  }
+  if (agentDispatchMode) {
+    tags.push(["buzz", "agent-dispatch", agentDispatchMode]);
   }
 
   return {
@@ -463,6 +468,7 @@ export function useSendMessageMutation(
       mediaTags?: string[][];
       sentFromThreadRootId?: string | null;
       sentFromThreadRootExcerpt?: string | null;
+      agentDispatchMode?: AgentDispatchMode;
       transport?: "auto" | "http";
     },
     MessageQueryContext | undefined
@@ -476,6 +482,7 @@ export function useSendMessageMutation(
       mediaTags,
       sentFromThreadRootId,
       sentFromThreadRootExcerpt,
+      agentDispatchMode,
       transport = "auto",
     }) => {
       // Prefer a channel captured by the caller at compose time. Otherwise,
@@ -566,6 +573,7 @@ export function useSendMessageMutation(
                   mentionTags,
                   linkPreviewTags,
                   sentFromThreadTag,
+                  agentDispatch: agentDispatchMode ?? null,
                   mentionPubkeys: recipientPubkeys,
                   kind: null,
                   diagnosticId: trace.operationId,
@@ -587,6 +595,7 @@ export function useSendMessageMutation(
                 mentionTags,
                 linkPreviewTags,
                 trace.operationId,
+                agentDispatchMode,
               );
           trace.finishSuccess(result.eventId);
         } catch (error) {
@@ -631,6 +640,9 @@ export function useSendMessageMutation(
             ...mentionTags,
             ...linkPreviewTags,
             ...(sentFromThreadTag ? [sentFromThreadTag] : []),
+            ...(agentDispatchMode
+              ? [["buzz", "agent-dispatch", agentDispatchMode]]
+              : []),
           ],
           content: content.trim(),
           sig: "",
@@ -645,7 +657,13 @@ export function useSendMessageMutation(
         effectiveChannel.id,
         content,
         recipientPubkeys,
-        [...mentionTags, ...(sentFromThreadTag ? [sentFromThreadTag] : [])],
+        [
+          ...mentionTags,
+          ...(sentFromThreadTag ? [sentFromThreadTag] : []),
+          ...(agentDispatchMode
+            ? [["buzz", "agent-dispatch", agentDispatchMode]]
+            : []),
+        ],
         trace,
       );
     },
@@ -658,6 +676,7 @@ export function useSendMessageMutation(
       mediaTags,
       sentFromThreadRootId,
       sentFromThreadRootExcerpt,
+      agentDispatchMode,
     }) => {
       // Mirror mutationFn's target resolution so the optimistic message lands
       // in the cache for the same channel as the real send. A caller-supplied
@@ -695,6 +714,7 @@ export function useSendMessageMutation(
         mediaTags ?? [],
         sentFromThreadRootId ?? null,
         sentFromThreadRootExcerpt ?? null,
+        agentDispatchMode,
       );
 
       const nextWindow = mergeLiveChannelWindowEvent(

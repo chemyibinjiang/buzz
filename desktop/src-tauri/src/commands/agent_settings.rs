@@ -70,6 +70,57 @@ pub async fn set_managed_agent_start_on_app_launch(
 }
 
 #[tauri::command]
+pub async fn set_managed_agent_paused(
+    pubkey: String,
+    paused: bool,
+    app: AppHandle,
+) -> Result<ManagedAgentSummary, String> {
+    tokio::task::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let _store_guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let mut records = load_managed_agents(&app)?;
+        let mut runtimes = state
+            .managed_agent_processes
+            .lock()
+            .map_err(|error| error.to_string())?;
+
+        let (sync_changed, exited_pubkeys) =
+            sync_managed_agent_processes(&mut records, &mut runtimes, &current_instance_id(&app));
+        if sync_changed {
+            save_managed_agents(&app, &records)?;
+        }
+        for exited_pubkey in &exited_pubkeys {
+            state.clear_agent_session_caches(exited_pubkey);
+        }
+
+        {
+            let record = find_managed_agent_mut(&mut records, &pubkey)?;
+            crate::managed_agents::set_managed_agent_paused(&mut record.env_vars, paused);
+            record.updated_at = now_iso();
+        }
+
+        save_managed_agents(&app, &records)?;
+        let record = records
+            .iter()
+            .find(|record| record.pubkey == pubkey)
+            .ok_or_else(|| format!("agent {pubkey} not found"))?;
+        let personas = load_personas(&app).unwrap_or_default();
+        build_managed_agent_summary(
+            &app,
+            record,
+            &runtimes,
+            &personas,
+            &crate::managed_agents::load_global_agent_config(&app).unwrap_or_default(),
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+#[tauri::command]
 pub async fn set_managed_agent_auto_restart(
     pubkey: String,
     auto_restart_on_config_change: bool,

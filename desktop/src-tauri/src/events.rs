@@ -247,6 +247,15 @@ pub fn build_remove_member(channel_id: Uuid, target_pubkey: &str) -> Result<Even
 
 // ── Messages ─────────────────────────────────────────────────────────────────
 
+fn append_agent_dispatch_tag(mode: Option<&str>, tags: &mut Vec<Tag>) -> Result<(), String> {
+    let Some(mode) = mode else { return Ok(()) };
+    if !matches!(mode, "queue" | "steer") {
+        return Err("agent dispatch mode must be `queue` or `steer`".into());
+    }
+    tags.push(tag(vec!["buzz", "agent-dispatch", mode])?);
+    Ok(())
+}
+
 /// Kind 9 — stream message.
 #[allow(clippy::too_many_arguments)]
 pub fn build_message(
@@ -259,6 +268,7 @@ pub fn build_message(
     mention_ref_tags: &[Vec<String>],
     link_preview_tags: &[Vec<String>],
     sent_from_thread_tag: Option<&[String]>,
+    agent_dispatch: Option<&str>,
     relay_base: &str,
 ) -> Result<EventBuilder, String> {
     build_message_with_client_tags(
@@ -271,6 +281,7 @@ pub fn build_message(
         mention_ref_tags,
         link_preview_tags,
         sent_from_thread_tag,
+        agent_dispatch,
         relay_base,
         &[],
     )
@@ -292,6 +303,7 @@ pub fn build_message_with_client_tags(
     mention_ref_tags: &[Vec<String>],
     link_preview_tags: &[Vec<String>],
     sent_from_thread_tag: Option<&[String]>,
+    agent_dispatch: Option<&str>,
     relay_base: &str,
     client_tags: &[Vec<String>],
 ) -> Result<EventBuilder, String> {
@@ -309,6 +321,7 @@ pub fn build_message_with_client_tags(
     mention_reference_tags(mention_ref_tags, &mut tags)?;
     crate::link_preview_tags::append(link_preview_tags, relay_base, &mut tags)?;
     append_sent_from_thread_tag(sent_from_thread_tag, &mut tags)?;
+    append_agent_dispatch_tag(agent_dispatch, &mut tags)?;
     append_client_tags(client_tags, &mut tags)?;
     Ok(EventBuilder::new(Kind::Custom(9), content).tags(tags))
 }
@@ -804,6 +817,17 @@ pub fn build_approval_deny(token: &str, note: Option<&str>) -> Result<EventBuild
 mod tests {
     use super::*;
     use nostr::Keys;
+
+    #[test]
+    fn agent_dispatch_tag_accepts_only_explicit_queue_or_steer() {
+        let mut tags = Vec::new();
+        append_agent_dispatch_tag(Some("queue"), &mut tags).expect("queue tag");
+        append_agent_dispatch_tag(Some("steer"), &mut tags).expect("steer tag");
+        assert_eq!(tags[0].as_slice(), ["buzz", "agent-dispatch", "queue"]);
+        assert_eq!(tags[1].as_slice(), ["buzz", "agent-dispatch", "steer"]);
+        assert!(append_agent_dispatch_tag(Some("interrupt"), &mut tags).is_err());
+    }
+
     #[test]
     fn channel_builders_reject_hash_only_names() {
         let channel_id = Uuid::new_v4();

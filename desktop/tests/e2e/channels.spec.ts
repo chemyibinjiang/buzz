@@ -4765,3 +4765,90 @@ test("canceling channel deletion keeps the owned stream", async ({ page }) => {
   await expect(page.getByTestId("chat-title")).toHaveText(channelName);
   await expect(page.getByTestId("stream-list")).toContainText(channelName);
 });
+
+test("active Agent work exposes Queue and Steer without hiding Send", async ({
+  page,
+}) => {
+  const agentPubkey = "cd".repeat(32);
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: agentPubkey,
+        name: "Dispatch Worker",
+        status: "running",
+        channelNames: ["agents"],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-agents").click();
+  await page.waitForFunction(
+    () =>
+      typeof (window as MockFeedWindow).__BUZZ_E2E_SEED_ACTIVE_TURNS__ ===
+      "function",
+  );
+  await page.evaluate(
+    ({ agentPubkey, channelId }) => {
+      (window as MockFeedWindow).__BUZZ_E2E_SEED_ACTIVE_TURNS__?.({
+        agentPubkey,
+        channelId,
+        turnId: "dispatch-mode-turn",
+      });
+    },
+    { agentPubkey, channelId: AGENTS_CHANNEL_ID },
+  );
+
+  const queue = page.getByTestId("agent-dispatch-queue");
+  const steer = page.getByTestId("agent-dispatch-steer");
+  await expect(queue.locator("input")).toBeChecked();
+  await expect(steer).toBeVisible();
+  await expect(page.getByTestId("stop-agent-output")).toBeVisible();
+  await expect(page.getByTestId("send-message")).toBeVisible();
+
+  await steer.click();
+  await expect(steer.locator("input")).toBeChecked();
+  const message = "steer this turn";
+  await page.getByTestId("message-input").fill(message);
+  await page.getByTestId("send-message").click();
+
+  await expect
+    .poll(() =>
+      page.evaluate((content) => {
+        const entries =
+          (
+            window as Window & {
+              __BUZZ_E2E_COMMAND_LOG__?: Array<{
+                command: string;
+                payload: unknown;
+              }>;
+            }
+          ).__BUZZ_E2E_COMMAND_LOG__ ?? [];
+        return entries.some((entry) => {
+          if (entry.command !== "plugin:websocket|send") return false;
+          const data = (
+            entry.payload as { message?: { data?: string } } | undefined
+          )?.message?.data;
+          if (!data) return false;
+          try {
+            const frame = JSON.parse(data) as unknown[];
+            const event = frame[1] as
+              | { content?: string; tags?: string[][] }
+              | undefined;
+            return (
+              frame[0] === "EVENT" &&
+              event?.content === content &&
+              event.tags?.some(
+                (tag) =>
+                  tag[0] === "buzz" &&
+                  tag[1] === "agent-dispatch" &&
+                  tag[2] === "steer",
+              )
+            );
+          } catch {
+            return false;
+          }
+        });
+      }, message),
+    )
+    .toBe(true);
+});

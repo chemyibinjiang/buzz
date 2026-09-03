@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent, SendChannelMessageResult } from "@/shared/api/types";
+import type { AgentDispatchMode } from "@/features/messages/ui/MessageComposer.types";
 import { KIND_STREAM_MESSAGE } from "@/shared/constants/kinds";
 
 export type MessageSendTransport = "websocket" | "http";
@@ -212,6 +213,7 @@ export async function sendChannelMessageWithDiagnostics(
   mentionTags: string[][],
   linkPreviewTags: string[][],
   diagnosticId: string,
+  agentDispatchMode?: AgentDispatchMode,
 ): Promise<SendChannelMessageResult> {
   const response = await invoke<RawSendChannelMessageResult>(
     "send_channel_message",
@@ -223,6 +225,7 @@ export async function sendChannelMessageWithDiagnostics(
       emojiTags,
       mentionTags,
       linkPreviewTags,
+      agentDispatch: agentDispatchMode ?? null,
       mentionPubkeys,
       kind: null,
       diagnosticId,

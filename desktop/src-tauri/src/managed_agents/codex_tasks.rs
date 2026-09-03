@@ -537,14 +537,7 @@ pub fn configure_task_bound_command(
         command.env_remove("BUZZ_ACP_CODEX_TASK_WORKSPACE");
         command.env_remove("BUZZ_ACP_CODEX_TASK_REMOTE");
     }
-    command.env(
-        "BUZZ_ACP_LAZY_POOL",
-        if lazy && binding.is_none() {
-            "true"
-        } else {
-            "false"
-        },
-    );
+    command.env("BUZZ_ACP_LAZY_POOL", if lazy { "true" } else { "false" });
 }
 
 pub fn configure_shared_app_server(
@@ -1244,6 +1237,88 @@ mod tests {
         assert_eq!(
             env.get("CODEX_PATH"),
             Some(&Some(r"C:\Buzz\buzz-acp.exe".to_string()))
+        );
+    }
+
+    #[test]
+    fn task_bound_command_can_listen_without_preloading_codex() {
+        let binding = CodexTaskBinding {
+            task_id: "019eca9a-beb9-7902-8ce6-527b2ba56020".to_string(),
+            thread_name: "Shared task".to_string(),
+            workspace: r"C:\repo".to_string(),
+            updated_at: "2026-08-11T00:00:00Z".to_string(),
+            model: None,
+            app_server_url: Some(DEFAULT_CODEX_SHARED_APP_SERVER_URL.to_string()),
+            ssh_host: None,
+            ssh_port: None,
+            ssh_username: None,
+            ssh_identity_file: None,
+            ssh_remote_app_server_port: None,
+            ssh_remote_shell: None,
+        };
+        let mut command = Command::new("buzz-acp");
+
+        configure_task_bound_command(&mut command, Some(&binding), true);
+
+        let env = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get("BUZZ_ACP_LAZY_POOL"),
+            Some(&Some("true".to_string()))
+        );
+        assert_eq!(
+            env.get("BUZZ_ACP_CODEX_TASK_ID"),
+            Some(&Some(binding.task_id))
+        );
+    }
+
+    #[test]
+    fn remote_task_bound_command_keeps_ssh_transport_when_lazy() {
+        let binding = CodexTaskBinding {
+            task_id: "019eca9a-beb9-7902-8ce6-527b2ba56020".to_string(),
+            thread_name: "Remote shared task".to_string(),
+            workspace: "/home/user/repo".to_string(),
+            updated_at: "2026-08-11T00:00:00Z".to_string(),
+            model: None,
+            app_server_url: Some("ws://127.0.0.1:52100".to_string()),
+            ssh_host: Some("100.71.241.45".to_string()),
+            ssh_port: Some(22),
+            ssh_username: Some("user".to_string()),
+            ssh_identity_file: None,
+            ssh_remote_app_server_port: Some(51919),
+            ssh_remote_shell: Some("posix".to_string()),
+        };
+        let mut command = Command::new("buzz-acp");
+
+        configure_task_bound_command(&mut command, Some(&binding), true);
+
+        let env = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get("BUZZ_ACP_LAZY_POOL"),
+            Some(&Some("true".to_string()))
+        );
+        assert_eq!(
+            env.get("BUZZ_ACP_CODEX_TASK_REMOTE"),
+            Some(&Some("true".to_string()))
+        );
+        assert_eq!(
+            env.get("BUZZ_ACP_CODEX_TASK_WORKSPACE"),
+            Some(&Some(binding.workspace))
         );
     }
 

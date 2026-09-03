@@ -6,6 +6,7 @@ import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import { ComposerDockBackdrop } from "@/features/messages/ui/ComposerDockBackdrop";
 import { ComposerUploadProgressOverlay } from "@/features/messages/ui/ComposerUploadProgressOverlay";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
+import type { AgentDispatchMode } from "@/features/messages/ui/MessageComposer.types";
 import { ComposerTimeoutBanner } from "@/features/moderation/ui/ComposerTimeoutBanner";
 import { useTimeoutState } from "@/features/moderation/lib/timeoutStore";
 import { isModerationDm } from "@/features/moderation/lib/moderationDm";
@@ -305,6 +306,11 @@ export const ChannelPane = React.memo(function ChannelPane({
       mentionPubkeys: string[],
       mediaTags?: string[][],
       channelId?: string | null,
+      threadContext?: {
+        parentEventId: string | null;
+        threadHeadId: string | null;
+      } | null,
+      agentDispatchMode?: AgentDispatchMode,
     ) => {
       const shouldCompleteWelcomeBanner =
         isActiveWelcomeChannel &&
@@ -312,7 +318,14 @@ export const ChannelPane = React.memo(function ChannelPane({
           mentionsKnownAgent(mentionPubkeys, knownAgentPubkeys));
 
       messageTimelineRef.current?.scrollToBottomOnNextUpdate();
-      await onSendMessage(content, mentionPubkeys, mediaTags, channelId);
+      await onSendMessage(
+        content,
+        mentionPubkeys,
+        mediaTags,
+        channelId,
+        threadContext,
+        agentDispatchMode,
+      );
 
       if (
         channelId &&

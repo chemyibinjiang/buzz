@@ -783,7 +783,7 @@ pub async fn update_managed_agent(
         // and the per-record field is never read by the runtime.
         if let Some(env_vars) = input.env_vars {
             crate::managed_agents::validate_user_env_keys(&env_vars)?;
-            record.env_vars = env_vars;
+            crate::managed_agents::replace_managed_agent_user_env(&mut record.env_vars, env_vars);
         }
 
         // Native provider/model fields are authoritative. Keep the typed marker

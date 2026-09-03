@@ -140,6 +140,7 @@ export function AgentsView() {
               <>
                 <div className="flex flex-wrap justify-end gap-2 [@container(max-width:40rem)]:hidden">
                   <Button
+                    data-testid="add-codex-task-button"
                     onClick={() => setIsCodexTaskOpen(true)}
                     size="sm"
                     variant="outline"
@@ -237,6 +238,7 @@ export function AgentsView() {
               isAgentsLoading={agents.managedAgentsQuery.isLoading}
               startingAgentPubkey={agents.startingAgentPubkey}
               restartingAgentPubkey={agents.restartingAgentPubkey}
+              pausingAgentPubkey={agents.pausingAgentPubkey}
               startingPersonaIds={agents.startingPersonaIds}
               onOpenAgentProfile={(pubkey, options) => {
                 openProfilePanel?.(pubkey, options);
@@ -249,6 +251,9 @@ export function AgentsView() {
               }}
               onRestartAgent={(pubkey) => {
                 void agents.handleRestart(pubkey);
+              }}
+              onSetPaused={(pubkey, paused) => {
+                void agents.handleSetPaused(pubkey, paused);
               }}
               onStartPersona={(persona) => {
                 void agents.handleStartPersona(persona);

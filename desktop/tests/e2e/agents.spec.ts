@@ -2708,3 +2708,45 @@ test("duplicate instances move from the agents gallery into the agent profile", 
     page.getByTestId(`user-profile-agent-delete-${additionalPubkey}`),
   ).toHaveCount(0);
 });
+
+test("agent cards distinguish pause from disconnect and preserve paused state", async ({
+  page,
+}) => {
+  const runningPubkey = TEST_IDENTITIES.alice.pubkey;
+  const pausedPubkey = TEST_IDENTITIES.charlie.pubkey;
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: runningPubkey,
+        name: "Running Worker",
+        status: "running",
+      },
+      {
+        pubkey: pausedPubkey,
+        name: "Paused Worker",
+        status: "stopped",
+        paused: true,
+      },
+    ],
+  });
+  await gotoApp(page);
+  await page.getByTestId("open-agents-view").click();
+
+  const runningCard = page.getByTestId(`managed-agent-${runningPubkey}`);
+  await expect(
+    runningCard.getByRole("button", { name: "Pause Running Worker" }),
+  ).toBeVisible();
+
+  const pausedCard = page.getByTestId(`managed-agent-${pausedPubkey}`);
+  await expect(pausedCard.getByText("Paused", { exact: true })).toBeVisible();
+  await pausedCard
+    .getByRole("button", { name: "Resume Paused Worker" })
+    .click();
+  await expect(pausedCard.getByText("Paused", { exact: true })).toHaveCount(0);
+  await expect(
+    pausedCard.getByRole("button", { name: "Resume Paused Worker" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Paused Worker will accept new work when it next connects."),
+  ).toBeVisible();
+});

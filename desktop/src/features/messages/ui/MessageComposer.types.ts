@@ -6,6 +6,8 @@ import type { MediaUploadController } from "@/features/messages/lib/useMediaUplo
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ChannelType } from "@/shared/api/types";
 
+export type AgentDispatchMode = "queue" | "steer";
+
 export type MessageComposerEditTarget = {
   author: string;
   body: string;
@@ -91,6 +93,7 @@ export type MessageComposerProps = {
       parentEventId: string | null;
       threadHeadId: string | null;
     } | null,
+    agentDispatchMode?: AgentDispatchMode,
   ) => Promise<void>;
   placeholder?: string;
   profiles?: UserProfileLookup;

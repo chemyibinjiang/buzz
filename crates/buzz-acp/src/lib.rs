@@ -1140,6 +1140,7 @@ async fn observer_control_author_allowed(
         }
         "switch_model" => sender == authorization.owner_pubkey_hex,
         "generate_handoff" => sender == authorization.owner_pubkey_hex,
+        "set_paused" => sender == authorization.owner_pubkey_hex,
         _ => false,
     }
 }
@@ -1151,6 +1152,7 @@ async fn handle_relay_observer_control_event(
     observer: Option<&observer::ObserverHandle>,
     authorization: &ObserverControlAuthorization<'_>,
     channel_info: &pool::ChannelInfoResolver,
+    paused: &mut bool,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -1213,13 +1215,8 @@ async fn handle_relay_observer_control_event(
         }
         Some("generate_handoff") => {
             let sender = event.pubkey.to_hex();
-            if !observer_control_author_allowed(
-                "generate_handoff",
-                &sender,
-                true,
-                authorization,
-            )
-            .await
+            if !observer_control_author_allowed("generate_handoff", &sender, true, authorization)
+                .await
             {
                 tracing::warn!(
                     sender = %event.pubkey,
@@ -1230,9 +1227,57 @@ async fn handle_relay_observer_control_event(
             }
             handle_generate_handoff_control(&payload, pool, observer).await;
         }
+        Some("set_paused") => {
+            let sender = event.pubkey.to_hex();
+            if !observer_control_author_allowed("set_paused", &sender, true, authorization).await {
+                tracing::warn!(
+                    sender = %event.pubkey,
+                    expected = %authorization.owner_pubkey_hex,
+                    "observer pause control frame from non-owner — dropping"
+                );
+                return;
+            }
+            handle_set_paused_control(&payload, paused, observer);
+        }
         _ => {
             tracing::debug!(payload = %payload, "ignoring unknown observer control frame");
         }
+    }
+}
+
+fn handle_set_paused_control(
+    payload: &serde_json::Value,
+    paused: &mut bool,
+    observer: Option<&observer::ObserverHandle>,
+) {
+    let Some(next_paused) = payload.get("paused").and_then(|value| value.as_bool()) else {
+        tracing::warn!("observer set_paused control frame missing paused boolean");
+        return;
+    };
+    let request_id = payload
+        .get("requestId")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    *paused = next_paused;
+    tracing::info!(paused = next_paused, "agent dispatch pause state changed");
+    if let Some(observer) = observer {
+        observer.emit(
+            "control_result",
+            None,
+            &observer::ObserverContext {
+                channel_id: None,
+                session_id: None,
+                turn_id: None,
+                started_at: None,
+                viewer_pubkeys: Vec::new(),
+            },
+            serde_json::json!({
+                "type": "set_paused",
+                "status": "ok",
+                "requestId": request_id,
+                "paused": next_paused,
+            }),
+        );
     }
 }
 
@@ -2253,19 +2298,23 @@ async fn tokio_main() -> Result<()> {
         )),
     });
 
-    // A task-bound identity is only online after its exact Codex task has been
-    // loaded. This acquires the adapter's task writer lock before peers can send
-    // work and prevents Codex Desktop from owning the task at the same time.
-    pool.preload_identity_session(&ctx)
-        .await
-        .map_err(|error| anyhow::anyhow!("failed to load identity-bound Codex task: {error}"))?;
+    let mut paused = config.start_paused;
 
-    // Online means the harness can receive work, not merely that its socket is
-    // connected. Publishing after channel subscriptions and task preloading gives
-    // desktop callers a durable readiness boundary before they send a mention.
+    // Eager task-bound harnesses retain the historical preload behavior. A
+    // lazy harness is already subscribed but owns no ACP worker yet, so its
+    // exact task is loaded by process_prompt only after accepted work arrives.
+    if !config.lazy_pool && !paused {
+        pool.preload_identity_session(&ctx).await.map_err(|error| {
+            anyhow::anyhow!("failed to load identity-bound Codex task: {error}")
+        })?;
+    }
+
+    // Online means the harness can receive work. Lazy task-bound harnesses may
+    // still need to acquire the task when the first queued event is dispatched.
     if config.presence_enabled {
-        match publish_presence(&presence_publisher, &presence_keys, "online").await {
-            Ok(_) => tracing::info!("presence set to online"),
+        let status = if paused { "away" } else { "online" };
+        match publish_presence(&presence_publisher, &presence_keys, status).await {
+            Ok(_) => tracing::info!(status, "initial presence set"),
             Err(e) => tracing::warn!("failed to set initial presence: {e}"),
         }
     }
@@ -2455,7 +2504,7 @@ async fn tokio_main() -> Result<()> {
         // unconditionally would complete instantly on every iteration — a
         // busy spin — whenever the queued work drained after a failed wake.
         let mut lazy_wake_work_pending = false;
-        if config.lazy_pool && !pool_ready {
+        if config.lazy_pool && !pool_ready && !paused {
             lazy_wake_work_pending = queue.has_flushable_work();
             if let Some(attempt) = pool_lifecycle
                 .start_wake_if_due(lazy_wake_work_pending, tokio::time::Instant::now())
@@ -2520,7 +2569,7 @@ async fn tokio_main() -> Result<()> {
             // arrive when the channel is silent.
             if queue.has_flushable_work() {
                 for (channel_id, thread_tags) in
-                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, paused)
                 {
                     typing_channels.insert(channel_id, thread_tags);
                 }
@@ -2580,7 +2629,7 @@ async fn tokio_main() -> Result<()> {
         // next relay event arrives — which can be minutes on quiet channels.
         if respawn_collected {
             for (channel_id, thread_tags) in
-                dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, paused)
             {
                 typing_channels.insert(channel_id, thread_tags);
             }
@@ -2659,6 +2708,7 @@ async fn tokio_main() -> Result<()> {
                     match control_event {
                         Some(event) => {
                             if let Some(ref owner_hex) = owner_cache.pubkey {
+                                let was_paused = paused;
                                 let authorization = ObserverControlAuthorization {
                                     owner_pubkey_hex: owner_hex,
                                     respond_to: &config.respond_to,
@@ -2673,7 +2723,29 @@ async fn tokio_main() -> Result<()> {
                                     observer.as_ref(),
                                     &authorization,
                                     &ctx.channel_info,
+                                    &mut paused,
                                 ).await;
+                                if paused != was_paused && config.presence_enabled {
+                                    let status = if paused { "away" } else { "online" };
+                                    if let Err(error) = publish_presence(
+                                        &presence_publisher,
+                                        &presence_keys,
+                                        status,
+                                    ).await {
+                                        tracing::warn!("failed to publish pause presence: {error}");
+                                    }
+                                }
+                                if was_paused && !paused && pool_ready {
+                                    for (channel_id, thread_tags) in dispatch_pending(
+                                        &mut pool,
+                                        &mut queue,
+                                        &ctx,
+                                        &mut last_activity,
+                                        paused,
+                                    ) {
+                                        typing_channels.insert(channel_id, thread_tags);
+                                    }
+                                }
                             } else {
                                 tracing::warn!("observer control frame received but no owner resolved — dropping");
                             }
@@ -2993,6 +3065,8 @@ async fn tokio_main() -> Result<()> {
                             // first. `nostr::Event::clone` is cheap (Arc-
                             // backed payload) so the cost is negligible.
                             let event_for_steer = buzz_event.event.clone();
+                            let requested_dispatch_mode =
+                                event_agent_dispatch_mode(&event_for_steer);
                             let prompt_tag_for_steer = prompt_tag.clone();
                             let accepted = queue.push(QueuedEvent {
                                 channel_id: buzz_event.channel_id,
@@ -3015,13 +3089,17 @@ async fn tokio_main() -> Result<()> {
                             // Event is already queued. If mode requires it AND
                             // the channel has an in-flight task, fire cancel —
                             // OR take the non-cancelling (ACP steer) fork for Steer signals.
-                            if accepted && queue.is_channel_in_flight(buzz_event.channel_id) {
+                            if !paused
+                                && accepted
+                                && queue.is_channel_in_flight(buzz_event.channel_id)
+                            {
                                 // Author eligibility (owner ∪ allowlist ∪ siblings)
                                 // is already enforced by the inbound author gate
                                 // above, so the mid-turn signal fires for every
                                 // event that reaches here.
                                 let signal = mode_gate_signal(
-                                    config.multiple_event_handling,
+                                    requested_dispatch_mode
+                                        .unwrap_or(config.multiple_event_handling),
                                     &author_hex,
                                     owner_cache.get(),
                                 );
@@ -3058,7 +3136,7 @@ async fn tokio_main() -> Result<()> {
                             }
                             if pool_ready {
                                 for (channel_id, thread_tags) in
-                                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, paused)
                                 {
                                     typing_channels.insert(channel_id, thread_tags);
                                 }
@@ -3117,7 +3195,7 @@ async fn tokio_main() -> Result<()> {
                         idle_pool_sleep_bound,
                         queue.has_in_flight() || heartbeat_in_flight,
                         !pool.join_set.is_empty(),
-                        queue.has_undispatched_work(),
+                        !paused && queue.has_undispatched_work(),
                         !wake_tasks.is_empty()
                             || any_respawn_in_flight(&crash_history),
                     ) {
@@ -3153,12 +3231,14 @@ async fn tokio_main() -> Result<()> {
                     }
                 } => {
                     let _ = result_rx;
-                    if !pool_ready {
+                    if paused {
+                        tracing::debug!("heartbeat_skipped_paused");
+                    } else if !pool_ready {
                         tracing::debug!("heartbeat_skipped_pool_not_ready");
                     } else if queue.has_flushable_work() {
                         tracing::debug!("heartbeat_skipped_events");
                         for (channel_id, thread_tags) in
-                            dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                            dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, paused)
                         {
                             typing_channels.insert(channel_id, thread_tags);
                         }
@@ -3182,8 +3262,9 @@ async fn tokio_main() -> Result<()> {
                     }
                     let pp = presence_publisher.clone();
                     let pk = presence_keys.clone();
+                    let status = if paused { "away" } else { "online" };
                     presence_task = Some(tokio::spawn(async move {
-                        if let Err(e) = publish_presence(&pp, &pk, "online").await {
+                        if let Err(e) = publish_presence(&pp, &pk, status).await {
                             tracing::warn!("presence heartbeat failed: {e}");
                         }
                     }));
@@ -3257,7 +3338,7 @@ async fn tokio_main() -> Result<()> {
                     break;
                 }
                 for (channel_id, thread_tags) in
-                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, paused)
                 {
                     typing_channels.insert(channel_id, thread_tags);
                 }
@@ -3282,7 +3363,7 @@ async fn tokio_main() -> Result<()> {
                     break;
                 }
                 for (channel_id, thread_tags) in
-                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, paused)
                 {
                     typing_channels.insert(channel_id, thread_tags);
                 }
@@ -3437,7 +3518,7 @@ async fn tokio_main() -> Result<()> {
                 // queue drains. We still try here in case the in-flight
                 // task has already returned.
                 for (channel_id, thread_tags) in
-                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, paused)
                 {
                     typing_channels.insert(channel_id, thread_tags);
                 }
@@ -3464,9 +3545,13 @@ async fn tokio_main() -> Result<()> {
                             "ready",
                             None,
                         );
-                        for (channel_id, thread_tags) in
-                            dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
-                        {
+                        for (channel_id, thread_tags) in dispatch_pending(
+                            &mut pool,
+                            &mut queue,
+                            &ctx,
+                            &mut last_activity,
+                            paused,
+                        ) {
                             typing_channels.insert(channel_id, thread_tags);
                         }
                     }
@@ -3621,6 +3706,19 @@ fn event_mentions_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
     event.tags.iter().any(|t| {
         t.as_slice().first().map(|s| s.as_str()) == Some("p")
             && t.as_slice().get(1).map(|s| s.as_str()) == Some(agent_pubkey_hex)
+    })
+}
+
+fn event_agent_dispatch_mode(event: &nostr::Event) -> Option<MultipleEventHandling> {
+    event.tags.iter().find_map(|tag| match tag.as_slice() {
+        [namespace, key, mode] if namespace == "buzz" && key == "agent-dispatch" => {
+            match mode.as_str() {
+                "queue" => Some(MultipleEventHandling::Queue),
+                "steer" => Some(MultipleEventHandling::Steer),
+                _ => None,
+            }
+        }
+        _ => None,
     })
 }
 
@@ -3800,7 +3898,11 @@ fn dispatch_pending(
     queue: &mut EventQueue,
     ctx: &Arc<PromptContext>,
     last_activity: &mut tokio::time::Instant,
+    paused: bool,
 ) -> Vec<(Uuid, ThreadTags)> {
+    if paused {
+        return Vec::new();
+    }
     let mut dispatched_channels = Vec::new();
     loop {
         let batch = match queue.flush_next() {
@@ -5309,6 +5411,39 @@ mod owner_control_command_tests {
         );
     }
 
+    #[test]
+    fn message_dispatch_tag_overrides_only_queue_or_steer() {
+        fn event_with_mode(mode: &str) -> nostr::Event {
+            EventBuilder::new(Kind::Custom(KIND_STREAM_MESSAGE as u16), "work")
+                .tag(Tag::parse(["buzz", "agent-dispatch", mode]).expect("dispatch tag"))
+                .sign_with_keys(&Keys::generate())
+                .expect("signed event")
+        }
+
+        assert_eq!(
+            event_agent_dispatch_mode(&event_with_mode("queue")),
+            Some(MultipleEventHandling::Queue)
+        );
+        assert_eq!(
+            event_agent_dispatch_mode(&event_with_mode("steer")),
+            Some(MultipleEventHandling::Steer)
+        );
+        assert_eq!(
+            event_agent_dispatch_mode(&event_with_mode("interrupt")),
+            None
+        );
+    }
+
+    #[test]
+    fn pause_control_requires_a_boolean_and_updates_state() {
+        let mut paused = false;
+        handle_set_paused_control(&serde_json::json!({ "paused": true }), &mut paused, None);
+        assert!(paused);
+
+        handle_set_paused_control(&serde_json::json!({ "paused": "false" }), &mut paused, None);
+        assert!(paused, "malformed controls must not change pause state");
+    }
+
     #[tokio::test]
     async fn signal_in_flight_task_sends_rotate_once() {
         let mut pool = AgentPool::from_slots(vec![]);
@@ -5450,6 +5585,10 @@ mod author_gate_tests {
         assert!(
             observer_control_author_allowed("switch_model", OWNER, false, &authorization,).await
         );
+        assert!(
+            !observer_control_author_allowed("set_paused", STRANGER, true, &authorization,).await
+        );
+        assert!(observer_control_author_allowed("set_paused", OWNER, true, &authorization,).await);
     }
 
     #[tokio::test]
@@ -6928,6 +7067,7 @@ mod build_mcp_servers_tests {
             system_prompt: None,
             team_instructions: None,
             initial_message: None,
+            start_paused: false,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
             multiple_event_handling: config::MultipleEventHandling::Queue,
@@ -7153,6 +7293,7 @@ mod error_outcome_emission_tests {
             system_prompt: None,
             team_instructions: None,
             initial_message: None,
+            start_paused: false,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
             multiple_event_handling: config::MultipleEventHandling::Queue,

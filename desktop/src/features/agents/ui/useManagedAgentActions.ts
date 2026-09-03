@@ -8,6 +8,7 @@ import {
   useManagedAgentLogQuery,
   useManagedAgentsQuery,
   useRelayAgentsQuery,
+  useSetManagedAgentPausedMutation,
   useSetManagedAgentStartOnAppLaunchMutation,
   useStartManagedAgentMutation,
   useStopManagedAgentMutation,
@@ -16,6 +17,7 @@ import {
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import type { AgentPersona, Channel, ManagedAgent } from "@/shared/api/types";
+import { setManagedAgentPausedLive } from "@/shared/api/agentControl";
 import { removeChannelMember } from "@/shared/api/tauri";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { findTaskBoundPersonaAgent } from "../agentReuse";
@@ -49,6 +51,7 @@ export function useManagedAgentActions() {
   const createAgentMutation = useCreateManagedAgentMutation();
   const availableRuntimesQuery = useAvailableAcpRuntimes();
   const startOnLaunchMutation = useSetManagedAgentStartOnAppLaunchMutation();
+  const pauseMutation = useSetManagedAgentPausedMutation();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [agentToAddToChannel, setAgentToAddToChannel] =
     React.useState<ManagedAgent | null>(null);
@@ -57,6 +60,9 @@ export function useManagedAgentActions() {
   >(() => new Set());
   const startingPersonaIdsRef = React.useRef(new Set<string>());
   const [restartingAgentPubkey, setRestartingAgentPubkey] = React.useState<
+    string | null
+  >(null);
+  const [pausingAgentPubkey, setPausingAgentPubkey] = React.useState<
     string | null
   >(null);
   const [logAgentPubkey, setLogAgentPubkey] = React.useState<string | null>(
@@ -179,6 +185,15 @@ export function useManagedAgentActions() {
         agent,
         startManagedAgent: startMutation.mutateAsync,
       });
+      if (agent.codexTaskBinding?.sshHost) {
+        setActionNoticeMessage(
+          `Buzz is listening for ${agent.codexTaskBinding.threadName} through SSH. The remote task loads only when work arrives.`,
+        );
+      } else if (agent.codexTaskBinding) {
+        setActionNoticeMessage(
+          `Buzz is listening for ${agent.codexTaskBinding.threadName}. The task loads only when work arrives; if Codex Desktop is using a private runtime, work waits until Desktop reconnects to the shared runtime.`,
+        );
+      }
     } catch (error) {
       setActionErrorMessage(
         error instanceof Error ? error.message : "Failed to start agent.",
@@ -377,6 +392,49 @@ export function useManagedAgentActions() {
     }
   }
 
+  async function handleSetPaused(pubkey: string, paused: boolean) {
+    clearFeedback();
+    const agent = managedAgents.find(
+      (candidate) => candidate.pubkey === pubkey,
+    );
+    if (!agent || pausingAgentPubkey === pubkey) return;
+    if (agent.backend.type !== "local") {
+      setActionErrorMessage(
+        "Pause is currently available for local agents only.",
+      );
+      return;
+    }
+
+    setPausingAgentPubkey(pubkey);
+    const active = isManagedAgentActive(agent);
+    let liveStateChanged = false;
+    try {
+      if (active) {
+        await setManagedAgentPausedLive(pubkey, paused);
+        liveStateChanged = true;
+      }
+      const updated = await pauseMutation.mutateAsync({ pubkey, paused });
+      setActionNoticeMessage(
+        updated.paused
+          ? `${updated.name} is paused. New messages will wait until you resume it.`
+          : active
+            ? `${updated.name} resumed. Queued messages can run now.`
+            : `${updated.name} will accept new work when it next connects.`,
+      );
+    } catch (error) {
+      if (liveStateChanged) {
+        void setManagedAgentPausedLive(pubkey, !paused).catch(() => undefined);
+      }
+      setActionErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to update the Agent pause state.",
+      );
+    } finally {
+      setPausingAgentPubkey(null);
+    }
+  }
+
   function handleAddedToChannel(
     channel: Channel,
     result: AttachManagedAgentToChannelResult,
@@ -441,6 +499,7 @@ export function useManagedAgentActions() {
     createAgentMutation.isPending ||
     startMutation.isPending ||
     stopMutation.isPending ||
+    pauseMutation.isPending ||
     startOnLaunchMutation.isPending ||
     deleteMutation.isPending;
   const startingAgentPubkey =
@@ -471,6 +530,7 @@ export function useManagedAgentActions() {
     setActionErrorMessage,
     startingAgentPubkey,
     restartingAgentPubkey,
+    pausingAgentPubkey,
     startingPersonaIds,
     handleStart,
     handleRestart,
@@ -478,6 +538,7 @@ export function useManagedAgentActions() {
     handleStop,
     handleDelete,
     handleToggleStartOnAppLaunch,
+    handleSetPaused,
     handleAddedToChannel,
     handleBulkStopRunning,
     refetchManagedAgents: () => void managedAgentsQuery.refetch(),

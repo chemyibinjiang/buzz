@@ -4,7 +4,12 @@ import {
   ChevronDown,
   ChevronRight,
   EllipsisVertical,
+  Laptop,
+  LoaderCircle,
+  Pause,
   Pencil,
+  Play,
+  Server,
 } from "lucide-react";
 
 import {
@@ -21,6 +26,7 @@ import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelConte
 import { useFeedbackToasts } from "@/shared/hooks/useToastEffect";
 import { requestOpenEditAgent } from "@/features/agents/openEditAgentEvent";
 import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { IdentityCardSkeleton } from "@/shared/ui/identity-card-skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { AgentIdentityCard } from "./AgentIdentityCard";
 import { AgentRuntimeAvatarControl } from "./AgentRuntimeAvatarControl";
 import { CreateIdentityCard } from "./CreateIdentityCard";
@@ -43,6 +50,7 @@ type UnifiedAgentsSectionProps = {
   agentsError: Error | null;
   isActionPending: boolean;
   isAgentsLoading: boolean;
+  pausingAgentPubkey: string | null;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
   startingPersonaIds: ReadonlySet<string>;
@@ -52,6 +60,7 @@ type UnifiedAgentsSectionProps = {
   ) => void;
   onOpenPersonaProfile: (persona: AgentPersona) => void;
   onRestartAgent: (pubkey: string) => void;
+  onSetPaused: (pubkey: string, paused: boolean) => void;
   onStartAgent: (pubkey: string) => void;
   onStartPersona: (persona: AgentPersona) => void;
   personas: AgentPersona[];
@@ -77,6 +86,84 @@ export const AGENT_CARD_GRID_COLUMNS_CLASS =
   "grid-cols-1 [@container(min-width:21rem)]:grid-cols-2 [@container(min-width:32rem)]:grid-cols-3 [@container(min-width:43rem)]:grid-cols-4 [@container(min-width:54rem)]:grid-cols-5";
 export const IDENTITY_CARD_GRID_CLASS = `${AGENT_CARD_COLUMN_CLASS} ${AGENT_CARD_GRID_COLUMNS_CLASS} grid gap-3`;
 
+function CodexTaskLocationBadge({ agent }: { agent: ManagedAgent }) {
+  const binding = agent.codexTaskBinding;
+  if (!binding) return null;
+  const remote = Boolean(binding.sshHost);
+  const Icon = remote ? Server : Laptop;
+  return (
+    <Badge className="max-w-full gap-1" variant="outline">
+      <Icon className="h-3 w-3 shrink-0" />
+      <span className="truncate">
+        {remote ? `SSH · ${binding.sshHost}` : "Local Codex task"}
+      </span>
+    </Badge>
+  );
+}
+
+function AgentLifecycleBadges({
+  agent,
+  isActive,
+  isPausing,
+  onSetPaused,
+}: {
+  agent: ManagedAgent;
+  isActive: boolean;
+  isPausing: boolean;
+  onSetPaused: (pubkey: string, paused: boolean) => void;
+}) {
+  const canTogglePause =
+    agent.backend.type === "local" && (isActive || agent.paused);
+  if (!agent.codexTaskBinding && !canTogglePause && !agent.paused) return null;
+
+  return (
+    <div className="flex max-w-full flex-wrap items-center gap-1">
+      <CodexTaskLocationBadge agent={agent} />
+      {agent.paused ? (
+        <Badge className="gap-1" variant="warning">
+          <Pause className="h-3 w-3" />
+          Paused
+        </Badge>
+      ) : null}
+      {canTogglePause ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              aria-label={`${agent.paused ? "Resume" : "Pause"} ${agent.name}`}
+              data-testid={`agent-pause-${agent.pubkey}`}
+              disabled={isPausing}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSetPaused(agent.pubkey, !agent.paused);
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              size="xs"
+              type="button"
+              variant="outline"
+            >
+              {isPausing ? (
+                <LoaderCircle className="animate-spin" />
+              ) : agent.paused ? (
+                <Play />
+              ) : (
+                <Pause />
+              )}
+              {agent.paused ? "Resume" : "Pause"}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {agent.paused
+              ? isActive
+                ? "Resume queued and new work"
+                : "Accept work when this Agent next connects"
+              : "Finish current work, then hold new messages"}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+    </div>
+  );
+}
+
 export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
   const {
     actionErrorMessage,
@@ -87,12 +174,14 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     agentsError,
     isActionPending,
     isAgentsLoading,
+    pausingAgentPubkey,
     restartingAgentPubkey,
     startingAgentPubkey,
     startingPersonaIds,
     onOpenAgentProfile,
     onOpenPersonaProfile,
     onRestartAgent,
+    onSetPaused,
     onStartAgent,
     onStartPersona,
     personas,
@@ -169,12 +258,14 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
                   getAvailability={getAvailability}
                   key={group.persona.id}
                   persona={group.persona}
+                  pausingAgentPubkey={pausingAgentPubkey}
                   restartingAgentPubkey={restartingAgentPubkey}
                   startingAgentPubkey={startingAgentPubkey}
                   startingPersonaIds={startingPersonaIds}
                   onOpenAgentProfile={onOpenAgentProfile}
                   onOpenPersonaProfile={onOpenPersonaProfile}
                   onRestartAgent={onRestartAgent}
+                  onSetPaused={onSetPaused}
                   onStartAgent={onStartAgent}
                   onStartPersona={onStartPersona}
                 />
@@ -190,11 +281,13 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
               getAvailability={getAvailability}
               groupKey="__unknown__"
               label="Unknown agents"
+              pausingAgentPubkey={pausingAgentPubkey}
               restartingAgentPubkey={restartingAgentPubkey}
               startingAgentPubkey={startingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
               onRestartAgent={onRestartAgent}
+              onSetPaused={onSetPaused}
               onStartAgent={onStartAgent}
             />
           ) : null}
@@ -206,11 +299,13 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
               getAvailability={getAvailability}
               groupKey="__ungrouped__"
               label="Custom agents"
+              pausingAgentPubkey={pausingAgentPubkey}
               restartingAgentPubkey={restartingAgentPubkey}
               startingAgentPubkey={startingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
               onRestartAgent={onRestartAgent}
+              onSetPaused={onSetPaused}
               onStartAgent={onStartAgent}
             />
           ) : null}
@@ -241,12 +336,14 @@ function AgentPersonaCard({
   defaultModel,
   getAvailability,
   persona,
+  pausingAgentPubkey,
   restartingAgentPubkey,
   startingAgentPubkey,
   startingPersonaIds,
   onOpenAgentProfile,
   onOpenPersonaProfile,
   onRestartAgent,
+  onSetPaused,
   onStartAgent,
   onStartPersona,
 }: {
@@ -258,6 +355,7 @@ function AgentPersonaCard({
   defaultModel: string;
   getAvailability: AgentAvailabilityReader;
   persona: AgentPersona;
+  pausingAgentPubkey: string | null;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
   startingPersonaIds: ReadonlySet<string>;
@@ -267,6 +365,7 @@ function AgentPersonaCard({
   ) => void;
   onOpenPersonaProfile: (persona: AgentPersona) => void;
   onRestartAgent: (pubkey: string) => void;
+  onSetPaused: (pubkey: string, paused: boolean) => void;
   onStartAgent: (pubkey: string) => void;
   onStartPersona: (persona: AgentPersona) => void;
 }) {
@@ -350,6 +449,13 @@ function AgentPersonaCard({
             <AlertTriangle className="h-3 w-3" />
             Configuration missing
           </Badge>
+        ) : agent ? (
+          <AgentLifecycleBadges
+            agent={agent}
+            isActive={isActive}
+            isPausing={pausingAgentPubkey === agent.pubkey}
+            onSetPaused={onSetPaused}
+          />
         ) : null
       }
     />
@@ -360,15 +466,18 @@ function StandaloneAgentCard({
   agent,
   defaultModel,
   getAvailability,
+  pausingAgentPubkey,
   restartingAgentPubkey,
   startingAgentPubkey,
   onOpenAgentProfile,
   onRestartAgent,
+  onSetPaused,
   onStartAgent,
 }: {
   agent: ManagedAgent;
   defaultModel: string;
   getAvailability: AgentAvailabilityReader;
+  pausingAgentPubkey: string | null;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
   onOpenAgentProfile: (
@@ -376,6 +485,7 @@ function StandaloneAgentCard({
     options?: ProfilePanelOpenOptions,
   ) => void;
   onRestartAgent: (pubkey: string) => void;
+  onSetPaused: (pubkey: string, paused: boolean) => void;
   onStartAgent: (pubkey: string) => void;
 }) {
   const availability = getAvailability(agent.pubkey);
@@ -443,7 +553,14 @@ function StandaloneAgentCard({
             <AlertTriangle className="h-3 w-3" />
             Configuration missing
           </Badge>
-        ) : null
+        ) : (
+          <AgentLifecycleBadges
+            agent={agent}
+            isActive={isActive}
+            isPausing={pausingAgentPubkey === agent.pubkey}
+            onSetPaused={onSetPaused}
+          />
+        )
       }
     />
   );
@@ -500,11 +617,13 @@ function CollapsibleAgentGroup({
   collapsed,
   defaultModel,
   getAvailability,
+  pausingAgentPubkey,
   restartingAgentPubkey,
   startingAgentPubkey,
   onToggle,
   onOpenAgentProfile,
   onRestartAgent,
+  onSetPaused,
   onStartAgent,
 }: {
   groupKey: string;
@@ -513,6 +632,7 @@ function CollapsibleAgentGroup({
   collapsed: ReadonlySet<string>;
   defaultModel: string;
   getAvailability: AgentAvailabilityReader;
+  pausingAgentPubkey: string | null;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
   onToggle: (key: string) => void;
@@ -521,6 +641,7 @@ function CollapsibleAgentGroup({
     options?: ProfilePanelOpenOptions,
   ) => void;
   onRestartAgent: (pubkey: string) => void;
+  onSetPaused: (pubkey: string, paused: boolean) => void;
   onStartAgent: (pubkey: string) => void;
 }) {
   const isCollapsed = collapsed.has(groupKey);
@@ -547,10 +668,12 @@ function CollapsibleAgentGroup({
               defaultModel={defaultModel}
               getAvailability={getAvailability}
               key={agent.pubkey}
+              pausingAgentPubkey={pausingAgentPubkey}
               restartingAgentPubkey={restartingAgentPubkey}
               startingAgentPubkey={startingAgentPubkey}
               onOpenAgentProfile={onOpenAgentProfile}
               onRestartAgent={onRestartAgent}
+              onSetPaused={onSetPaused}
               onStartAgent={onStartAgent}
             />
           ))}

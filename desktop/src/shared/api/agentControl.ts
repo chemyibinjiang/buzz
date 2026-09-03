@@ -34,6 +34,48 @@ export async function switchManagedAgentModel(
   });
 }
 
+/** Pause or resume new work without disconnecting the managed Agent. */
+export async function setManagedAgentPausedLive(
+  pubkey: string,
+  paused: boolean,
+): Promise<void> {
+  await ensureRelayObserverSubscription();
+  const requestId = crypto.randomUUID();
+  let unsubscribe: () => void = () => undefined;
+  let timeout: number | null = null;
+  const result = new Promise<void>((resolve, reject) => {
+    timeout = window.setTimeout(() => {
+      unsubscribe();
+      reject(new Error("Agent did not acknowledge the pause command."));
+    }, 15_000);
+    unsubscribe = subscribeControlResults(pubkey, (frame) => {
+      if (frame.type !== "set_paused" || frame.requestId !== requestId) {
+        return;
+      }
+      if (timeout !== null) window.clearTimeout(timeout);
+      unsubscribe();
+      if (frame.status === "ok" && frame.paused === paused) {
+        resolve();
+        return;
+      }
+      reject(new Error("Agent rejected the pause command."));
+    });
+  });
+
+  try {
+    await sendAgentObserverControl(pubkey, {
+      type: "set_paused",
+      requestId,
+      paused,
+    });
+  } catch (error) {
+    if (timeout !== null) window.clearTimeout(timeout);
+    unsubscribe();
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+  return result;
+}
+
 /** Ask an idle Agent ACP session to summarize itself as Markdown. */
 export async function generateManagedAgentHandoff(
   pubkey: string,

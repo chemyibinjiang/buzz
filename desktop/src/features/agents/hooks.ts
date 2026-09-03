@@ -46,6 +46,7 @@ import { getCodexTaskHistory, listCodexTasks } from "@/shared/api/codexTasks";
 import type { HarnessDefinitionInput } from "@/shared/api/tauri";
 import {
   setManagedAgentAutoRestart,
+  setManagedAgentPaused,
   setManagedAgentStartOnAppLaunch,
   startManagedAgent,
   stopManagedAgent,
@@ -635,6 +636,19 @@ export function useSetManagedAgentStartOnAppLaunchMutation() {
       pubkey: string;
       startOnAppLaunch: boolean;
     }) => setManagedAgentStartOnAppLaunch(pubkey, startOnAppLaunch),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+      await queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });
+    },
+  });
+}
+
+export function useSetManagedAgentPausedMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ pubkey, paused }: { pubkey: string; paused: boolean }) =>
+      setManagedAgentPaused(pubkey, paused),
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
       await queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });

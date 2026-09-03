@@ -4,10 +4,12 @@ import type { QueuedMediaAttachment } from "@/features/messages/lib/backgroundMe
 import type { DraftMentionRef } from "@/features/messages/lib/useDrafts";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { MENTION_REFERENCE_TAG } from "@/shared/lib/resolveMentionNames";
+import type { AgentDispatchMode } from "./MessageComposer.types";
 
 export { MENTION_REFERENCE_TAG };
 
 export type PendingNonMemberMentionSend = {
+  agentDispatchMode: AgentDispatchMode;
   capturedChannelId: string | null;
   capturedThreadContext: {
     parentEventId: string | null;
@@ -32,6 +34,7 @@ export type PendingNonMemberMentionSend = {
 };
 
 export type SendMessageWithMentionFlowInput = {
+  agentDispatchMode: AgentDispatchMode;
   capturedChannelId: string | null;
   capturedThreadContext?: PendingNonMemberMentionSend["capturedThreadContext"];
   pendingImeta: ImetaMedia[];

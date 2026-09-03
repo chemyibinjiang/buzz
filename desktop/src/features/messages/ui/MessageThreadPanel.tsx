@@ -15,7 +15,10 @@ import {
   hasSameMessageAuthor,
   isWithinGroupingWindow,
 } from "@/features/messages/lib/messageGrouping";
-import type { MessageComposerEditTarget } from "@/features/messages/ui/MessageComposer.types";
+import type {
+  AgentDispatchMode,
+  MessageComposerEditTarget,
+} from "@/features/messages/ui/MessageComposer.types";
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { VideoReviewPresentation } from "@/features/messages/lib/videoReviewContext";
@@ -93,6 +96,7 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
       parentEventId: string | null;
       threadHeadId: string | null;
     } | null,
+    agentDispatchMode?: AgentDispatchMode,
   ) => Promise<void>;
   onSendToChannel?: (
     message: TimelineMessage,

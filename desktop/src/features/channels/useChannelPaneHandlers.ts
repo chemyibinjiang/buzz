@@ -10,6 +10,7 @@ import { resolveThreadReplyTarget } from "@/features/messages/hooks";
 import { getSendToChannelSemantics } from "@/features/messages/lib/sendToChannelSemantics";
 import { summarizeThreadRoot } from "@/features/messages/lib/sentFromThread";
 import type { TimelineMessage } from "@/features/messages/types";
+import type { AgentDispatchMode } from "@/features/messages/ui/MessageComposer.types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 
 /**
@@ -284,12 +285,18 @@ export function useChannelPaneHandlers({
       mentionPubkeys: string[],
       mediaTags?: string[][],
       channelId?: string | null,
+      _threadContext?: {
+        parentEventId: string | null;
+        threadHeadId: string | null;
+      } | null,
+      agentDispatchMode?: AgentDispatchMode,
     ) => {
       await sendMutateRef.current({
         content,
         mentionPubkeys,
         mediaTags,
         channelId: channelId ?? undefined,
+        agentDispatchMode,
       });
     },
     [],
@@ -327,6 +334,7 @@ export function useChannelPaneHandlers({
         parentEventId: string | null;
         threadHeadId: string | null;
       } | null,
+      agentDispatchMode?: AgentDispatchMode,
     ) => {
       // Resolve target using captured submit-time context (race-free) or live
       // refs (legacy path). When threadContext is supplied, no live-ref reads
@@ -359,6 +367,7 @@ export function useChannelPaneHandlers({
         parentEventId,
         mediaTags,
         channelId: channelId ?? undefined,
+        agentDispatchMode,
       });
 
       // Only update thread UI state if the user is still viewing the same

@@ -20,6 +20,8 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { cn } from "@/shared/lib/cn";
+import type { AgentDispatchMode } from "./MessageComposer.types";
 import { ComposerEmojiPicker } from "./ComposerEmojiPicker";
 import { FormattingToolbar } from "./FormattingToolbar";
 import { SelectionFormattingTray } from "./SelectionFormattingTray";
@@ -30,9 +32,11 @@ const presenceSpring = {
   stiffness: 400,
   damping: 28,
 } as const;
+const ignoreAgentDispatchModeChange = (_mode: AgentDispatchMode) => undefined;
 
 export const MessageComposerToolbar = React.memo(
   function MessageComposerToolbar({
+    agentDispatchMode = "queue",
     composerDisabled,
     editor,
     extraActions,
@@ -42,6 +46,7 @@ export const MessageComposerToolbar = React.memo(
     isSending,
     isUploading,
     onCaptureSelection,
+    onAgentDispatchModeChange = ignoreAgentDispatchModeChange,
     onEmojiPickerOpenChange,
     onEmojiSelect,
     onFormattingToggle,
@@ -50,9 +55,11 @@ export const MessageComposerToolbar = React.memo(
     onPaperclip,
     onStopAgents,
     sendDisabled,
+    showAgentDispatchMode = false,
     stoppingAgentPubkeys = [],
     stoppableAgents = [],
   }: {
+    agentDispatchMode?: AgentDispatchMode;
     composerDisabled: boolean;
     editor: Editor | null;
     extraActions?: React.ReactNode;
@@ -62,6 +69,7 @@ export const MessageComposerToolbar = React.memo(
     isSending: boolean;
     isUploading: boolean;
     onCaptureSelection: () => void;
+    onAgentDispatchModeChange?: (mode: AgentDispatchMode) => void;
     onEmojiPickerOpenChange: (open: boolean) => void;
     onEmojiSelect: (emoji: string) => void;
     onFormattingToggle: (pressed: boolean) => void;
@@ -70,9 +78,11 @@ export const MessageComposerToolbar = React.memo(
     onPaperclip: () => void;
     onStopAgents?: (pubkeys: readonly string[]) => void;
     sendDisabled: boolean;
+    showAgentDispatchMode?: boolean;
     stoppingAgentPubkeys?: readonly string[];
     stoppableAgents?: readonly { name: string; pubkey: string }[];
   }) {
+    const dispatchModeName = React.useId();
     const stoppingAgentSet = new Set(stoppingAgentPubkeys);
     const isStoppingAgent = stoppingAgentPubkeys.length > 0;
     const stopButton = (
@@ -284,6 +294,37 @@ export const MessageComposerToolbar = React.memo(
 
         <div className="flex items-center gap-2">
           {extraActions}
+          {showAgentDispatchMode ? (
+            <div
+              aria-label="Agent message handling"
+              className="flex h-8 items-center rounded-md border bg-muted/40 p-0.5"
+              role="radiogroup"
+            >
+              {(["queue", "steer"] as const).map((mode) => (
+                <label
+                  className={cn(
+                    "flex h-7 cursor-pointer items-center rounded px-2 text-xs font-medium transition-colors",
+                    agentDispatchMode === mode
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  data-testid={`agent-dispatch-${mode}`}
+                  key={mode}
+                >
+                  <input
+                    checked={agentDispatchMode === mode}
+                    className="sr-only"
+                    disabled={composerDisabled}
+                    name={dispatchModeName}
+                    onChange={() => onAgentDispatchModeChange(mode)}
+                    type="radio"
+                    value={mode}
+                  />
+                  {mode === "queue" ? "Queue" : "Steer"}
+                </label>
+              ))}
+            </div>
+          ) : null}
           {onStopAgents && stoppableAgents.length > 0 ? (
             stoppableAgents.length > 1 ? (
               <DropdownMenu>
@@ -335,25 +376,24 @@ export const MessageComposerToolbar = React.memo(
                 <TooltipContent>Stop {stoppableAgents[0].name}</TooltipContent>
               </Tooltip>
             )
-          ) : (
-            <Button
-              aria-label={isSending ? "Sending" : "Send message"}
-              className="rounded-full"
-              data-testid="send-message"
-              disabled={sendDisabled || isSending}
-              size="icon"
-              type="submit"
-            >
-              {isSending ? (
-                <span
-                  aria-hidden
-                  className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent"
-                />
-              ) : (
-                <ArrowUp aria-hidden />
-              )}
-            </Button>
-          )}
+          ) : null}
+          <Button
+            aria-label={isSending ? "Sending" : "Send message"}
+            className="rounded-full"
+            data-testid="send-message"
+            disabled={sendDisabled || isSending}
+            size="icon"
+            type="submit"
+          >
+            {isSending ? (
+              <span
+                aria-hidden
+                className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent"
+              />
+            ) : (
+              <ArrowUp aria-hidden />
+            )}
+          </Button>
         </div>
       </div>
     );

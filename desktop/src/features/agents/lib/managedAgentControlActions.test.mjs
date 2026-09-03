@@ -149,7 +149,7 @@ test("legacy Codex task bindings use shared-runtime disconnect copy", async () =
 
   assert.equal(stoppedPubkey, taskAgent.pubkey);
   assert.match(result.noticeMessage, /Disconnected Buzz/);
-  assert.match(result.noticeMessage, /Other clients connected/);
+  assert.match(result.noticeMessage, /Codex Desktop can continue/);
 });
 
 test("disconnecting Buzz leaves other shared-runtime clients connected", async () => {
@@ -173,7 +173,32 @@ test("disconnecting Buzz leaves other shared-runtime clients connected", async (
   });
 
   assert.match(result.noticeMessage, /Disconnected Buzz/);
-  assert.match(result.noticeMessage, /Other clients connected/);
+  assert.match(result.noticeMessage, /Codex Desktop can continue/);
+});
+
+test("disconnecting an SSH task preserves the remote task", async () => {
+  const taskAgent = agent({
+    codexTaskBinding: {
+      taskId: "019febeb-ae12-71d3-88c4-25c04a461042",
+      threadName: "Remote DoE worker",
+      workspace: "/home/user/repo",
+      updatedAt: new Date(0).toISOString(),
+      model: "gpt-5.4-mini[xhigh]",
+      appServerUrl: "ws://127.0.0.1:52100",
+      sshHost: "100.71.241.45",
+    },
+    status: "running",
+  });
+
+  const result = await stopManagedAgentWithRules({
+    agent: taskAgent,
+    channels: [],
+    relayAgents: [],
+    stopManagedAgent: async () => {},
+  });
+
+  assert.match(result.noticeMessage, /Disconnected Buzz/);
+  assert.match(result.noticeMessage, /remote Codex task/);
 });
 
 // --- respawnManagedAgentWithRules: stop→clear→start boundary tests -----------

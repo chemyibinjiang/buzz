@@ -370,6 +370,8 @@ export type ManagedAgent = {
   restartDiff: RestartDiffEntry[];
   /** Per-agent env vars. Layered on top of persona envVars. */
   envVars: Record<string, string>;
+  /** Connected to Buzz while holding new work for an explicit resume. */
+  paused: boolean;
   status: "running" | "stopped" | "deployed" | "not_deployed";
   pid: number | null;
   createdAt: string;
@@ -493,11 +495,12 @@ export type SwitchManagedAgentModelStatus =
   | "no_active_turn";
 
 export type ControlResultFrame = {
-  type: "cancel_turn" | "switch_model" | "generate_handoff";
+  type: "cancel_turn" | "switch_model" | "generate_handoff" | "set_paused";
   status: string;
   modelId?: string;
   requestId?: string;
   markdown?: string | null;
+  paused?: boolean;
 };
 
 export type GitBashPrerequisite = {

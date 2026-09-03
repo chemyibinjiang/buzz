@@ -321,6 +321,10 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_INITIAL_MESSAGE")]
     pub initial_message: Option<String>,
 
+    /// Start connected to the relay but hold incoming work until resumed.
+    #[arg(long, env = "BUZZ_ACP_START_PAUSED")]
+    pub start_paused: bool,
+
     #[arg(
         long,
         env = "BUZZ_ACP_SUBSCRIBE",
@@ -552,6 +556,7 @@ pub struct Config {
     /// Team-owned instructions layered separately from the agent system prompt.
     pub team_instructions: Option<String>,
     pub initial_message: Option<String>,
+    pub start_paused: bool,
     pub subscribe_mode: SubscribeMode,
     pub dedup_mode: DedupMode,
     pub multiple_event_handling: MultipleEventHandling,
@@ -1000,12 +1005,11 @@ impl Config {
                 ));
             }
         };
-        let lazy_pool = args.lazy_pool && codex_task_binding.is_none();
-        if args.lazy_pool && codex_task_binding.is_some() {
-            tracing::info!(
-                "lazy pool disabled because a task-bound identity must load its Codex task before going online"
-            );
-        }
+        // A task binding identifies the session to load; it does not require
+        // taking that task's writer lock before Buzz has accepted any work.
+        // Lazy startup keeps the relay identity online while Codex Desktop is
+        // using the task, then loads the exact task when work is dispatched.
+        let lazy_pool = args.lazy_pool;
 
         if let Some(ref channels) = args.channels {
             for ch in channels {
@@ -1173,6 +1177,7 @@ impl Config {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             initial_message: args.initial_message,
+            start_paused: args.start_paused,
             subscribe_mode: args.subscribe,
             dedup_mode: args.dedup,
             multiple_event_handling: args.multiple_event_handling,
@@ -1555,6 +1560,7 @@ mod tests {
             system_prompt: None,
             team_instructions: None,
             initial_message: None,
+            start_paused: false,
             subscribe_mode: mode,
             dedup_mode: DedupMode::Queue,
             multiple_event_handling: MultipleEventHandling::Queue,
@@ -2319,6 +2325,15 @@ channels = "ALL"
     }
 
     #[test]
+    fn start_paused_defaults_off_and_accepts_flag() {
+        let key = "0".repeat(64);
+        assert!(!CliArgs::parse_from(["buzz-acp", "--private-key", &key]).start_paused);
+        assert!(
+            CliArgs::parse_from(["buzz-acp", "--private-key", &key, "--start-paused"]).start_paused
+        );
+    }
+
+    #[test]
     fn idle_pool_sleep_defaults_disabled_and_accepts_cli_value() {
         let key = "0".repeat(64);
         let default = CliArgs::parse_from(["buzz-acp", "--private-key", &key]);
@@ -2948,7 +2963,7 @@ channels = "ALL"
     }
 
     #[test]
-    fn codex_task_binding_disables_lazy_pool() {
+    fn codex_task_binding_preserves_lazy_pool() {
         let workspace = tempfile::tempdir().unwrap();
         let args = CliArgs::try_parse_from(vec![
             "buzz-acp".to_string(),
@@ -2963,7 +2978,7 @@ channels = "ALL"
         .expect("clap should parse task binding");
 
         let config = Config::from_args(args).expect("task binding should be valid");
-        assert!(!config.lazy_pool);
+        assert!(config.lazy_pool);
     }
 
     #[test]

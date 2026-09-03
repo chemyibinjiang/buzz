@@ -8,7 +8,10 @@ import {
   useCreateManagedAgentMutation,
 } from "@/features/agents/hooks";
 import { useCodexSharedRuntimeQuery } from "@/features/agents/codexSharedRuntimeHooks";
-import { isCodexSharedRuntimeUsable } from "@/features/agents/codexSharedRuntimeStatus";
+import {
+  hasCodexDesktopRuntimeConflict,
+  isCodexSharedRuntimeUsable,
+} from "@/features/agents/codexSharedRuntimeStatus";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import {
   connectCodexSsh,
@@ -47,6 +50,9 @@ export function CodexTaskAgentDialog({
   const sharedRuntimeReady = isCodexSharedRuntimeUsable(
     sharedRuntimeQuery.data,
   );
+  const localBindingReady =
+    sharedRuntimeQuery.data?.state === "ready" &&
+    !sharedRuntimeQuery.data.desktopDetectionError;
   const runtimesQuery = useAvailableAcpRuntimes({ enabled: open });
   const codexRuntime = (runtimesQuery.data ?? []).find(
     (runtime) => runtime.id === "codex",
@@ -99,7 +105,7 @@ export function CodexTaskAgentDialog({
   const selectedTaskForSubmit = selectedRemoteTask ?? selectedTask;
   const selectedTaskRuntimeReady = selectedRemoteTask
     ? sshRuntime !== null
-    : sharedRuntimeReady;
+    : localBindingReady;
   const channels = React.useMemo(
     () =>
       (channelsQuery.data ?? []).filter(
@@ -301,8 +307,8 @@ export function CodexTaskAgentDialog({
       }
       toast.success(
         selectedChannel && channelAttached
-          ? `Codex task added to #${selectedChannel.name}`
-          : "Codex task added as an offline agent",
+          ? `Codex task bound and added to #${selectedChannel.name}`
+          : "Codex task bound as an offline agent",
       );
       if (created.profileSyncError) toast.warning(created.profileSyncError);
       onCreated(agent);
@@ -334,18 +340,18 @@ export function CodexTaskAgentDialog({
           <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-5 pr-14">
             <DialogTitle>Add a Codex task as an agent</DialogTitle>
             <DialogDescription className="max-w-full">
-              Create an independent Buzz identity that resumes one existing
-              Codex task across every Channel it joins.
+              Bind an independent Buzz identity to one existing Codex task.
+              Binding does not start the Agent or take control of the task.
             </DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-6 py-5">
             {!codexSetupReady ? (
-              <CodexSharedRuntimePanel enabled={open} />
+              <CodexSharedRuntimePanel bindingOnly enabled={open} />
             ) : (
               <>
                 {!sharedRuntimeReady ? (
-                  <CodexSharedRuntimePanel enabled={open} />
+                  <CodexSharedRuntimePanel bindingOnly enabled={open} />
                 ) : null}
                 <CodexSshDisclosure
                   connected={sshRuntime !== null}
@@ -637,8 +643,10 @@ export function CodexTaskAgentDialog({
 
                 <p className="break-words text-sm leading-6 text-muted-foreground">
                   {remoteTaskId
-                    ? "The agent connects to the selected remote Codex task through SSH. Task history and workspace files remain on the remote computer."
-                    : "The agent connects this task to Buzz through the computer shared runtime. Task history and workspace files stay on this computer."}
+                    ? "The binding uses SSH. Connecting Buzz opens the remote runtime, but the task itself loads only when work arrives; history and workspace files remain on the remote computer."
+                    : hasCodexDesktopRuntimeConflict(sharedRuntimeQuery.data)
+                      ? "This binding can be saved while Codex Desktop is working. Connect Buzz to listen for messages, then reconnect Desktop to the shared runtime before Buzz runs them."
+                      : "Connecting Buzz makes the identity available without loading this task. The task loads only when work arrives; history and workspace files stay on this computer."}
                 </p>
 
                 {!runtimesQuery.isLoading && !codexRuntime ? (
@@ -680,8 +688,8 @@ export function CodexTaskAgentDialog({
               type="button"
             >
               {createMutation.isPending || attachMutation.isPending
-                ? "Creating..."
-                : "Create agent"}
+                ? "Binding..."
+                : "Bind task"}
             </Button>
           </div>
         </div>

@@ -10,6 +10,7 @@ import {
   type RawInstallRuntimeResult,
 } from "@/shared/api/installTypes";
 import type { RawSendChannelMessageResult } from "@/shared/api/tauriMessageTypes";
+import type { AgentDispatchMode } from "@/features/messages/ui/MessageComposer.types";
 import type {
   AddChannelMembersInput,
   AddChannelMembersResult,
@@ -141,6 +142,7 @@ export type RawManagedAgent = {
   needs_restart: boolean;
   restart_diff?: RawRestartDiffEntry[];
   env_vars?: Record<string, string>;
+  paused?: boolean;
   status: ManagedAgent["status"];
   pid: number | null;
   created_at: string;
@@ -553,6 +555,7 @@ export async function sendChannelMessage(
   mentionTags?: string[][],
   linkPreviewTags?: string[][],
   sentFromThreadTag?: string[],
+  agentDispatchMode?: AgentDispatchMode,
 ): Promise<SendChannelMessageResult> {
   const response = await invokeTauri<RawSendChannelMessageResult>(
     "send_channel_message",
@@ -565,6 +568,7 @@ export async function sendChannelMessage(
       mentionTags: mentionTags ?? null,
       linkPreviewTags,
       sentFromThreadTag: sentFromThreadTag ?? null,
+      agentDispatch: agentDispatchMode ?? null,
       mentionPubkeys: mentionPubkeys ?? null,
       kind: kind ?? null,
     },
@@ -706,6 +710,7 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     needsRestart: agent.needs_restart ?? false,
     restartDiff: agent.restart_diff ?? [],
     envVars: agent.env_vars ?? {},
+    paused: agent.paused ?? false,
     status: agent.status,
     pid: agent.pid,
     createdAt: agent.created_at,

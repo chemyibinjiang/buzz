@@ -8,19 +8,50 @@ use std::collections::BTreeMap;
 
 use base64::Engine as _;
 
+pub(crate) const MANAGED_AGENT_PAUSED_KEY: &str = "BUZZ_DESKTOP_AGENT_PAUSED";
+
+pub(crate) fn managed_agent_paused(env_vars: &BTreeMap<String, String>) -> bool {
+    env_vars
+        .get(MANAGED_AGENT_PAUSED_KEY)
+        .is_some_and(|value| value == "true")
+}
+
+pub(crate) fn set_managed_agent_paused(env_vars: &mut BTreeMap<String, String>, paused: bool) {
+    if paused {
+        env_vars.insert(MANAGED_AGENT_PAUSED_KEY.to_string(), "true".to_string());
+    } else {
+        env_vars.remove(MANAGED_AGENT_PAUSED_KEY);
+    }
+}
+
+pub(crate) fn replace_managed_agent_user_env(
+    env_vars: &mut BTreeMap<String, String>,
+    replacement: BTreeMap<String, String>,
+) {
+    let paused = managed_agent_paused(env_vars);
+    *env_vars = replacement;
+    set_managed_agent_paused(env_vars, paused);
+}
+
 /// Seconds a woken lazy harness stays warm before it releases its worker
 /// subprocesses back to the empty-slot state (via `BUZZ_ACP_IDLE_POOL_SLEEP`).
 /// The next accepted event re-wakes it through the same lazy path. Matches the
 /// harness's own 15-minute per-turn idle window so a warm pool survives a
 /// normal back-and-forth but a truly quiet harness stops paying for workers.
 const IDLE_POOL_SLEEP_SECS: &str = "900";
+/// Task-bound workers should release their app-server session soon after a
+/// completed turn so Codex Desktop can resume the same task without requiring
+/// the Buzz identity to disconnect from the relay.
+const TASK_IDLE_POOL_SLEEP_SECS: &str = "5";
 
 /// Value for `BUZZ_ACP_IDLE_POOL_SLEEP`. Idle re-sleep is only meaningful for
 /// lazy harnesses (the harness ignores it otherwise); gate to `lazy` here so
 /// the env reads inert (`"0"` = disabled) for eager harnesses. This is a
 /// desktop-owned lifetime policy (reserved key), not user-tunable.
-pub(super) fn idle_pool_sleep_env(lazy: bool) -> &'static str {
-    if lazy {
+pub(super) fn idle_pool_sleep_env(lazy: bool, task_bound: bool) -> &'static str {
+    if lazy && task_bound {
+        TASK_IDLE_POOL_SLEEP_SECS
+    } else if lazy {
         IDLE_POOL_SLEEP_SECS
     } else {
         "0"
@@ -141,8 +172,48 @@ pub(crate) fn parse_agent_env_lines(raw: &str) -> Vec<(&str, &str)> {
 mod tests {
     use super::{
         baked_build_env, build_buzz_agent_provider_defaults, build_env_map,
-        discovery_env_with_baked_floor, parse_agent_env_lines,
+        discovery_env_with_baked_floor, idle_pool_sleep_env, managed_agent_paused,
+        parse_agent_env_lines, replace_managed_agent_user_env, set_managed_agent_paused,
+        MANAGED_AGENT_PAUSED_KEY,
     };
+
+    #[test]
+    fn pause_marker_round_trips_without_leaving_false_state() {
+        let mut env = std::collections::BTreeMap::new();
+        assert!(!managed_agent_paused(&env));
+        set_managed_agent_paused(&mut env, true);
+        assert!(managed_agent_paused(&env));
+        assert_eq!(
+            env.get(MANAGED_AGENT_PAUSED_KEY).map(String::as_str),
+            Some("true")
+        );
+        set_managed_agent_paused(&mut env, false);
+        assert!(!managed_agent_paused(&env));
+        assert!(!env.contains_key(MANAGED_AGENT_PAUSED_KEY));
+    }
+
+    #[test]
+    fn replacing_user_env_preserves_the_internal_pause_marker() {
+        let mut env = std::collections::BTreeMap::from([
+            (MANAGED_AGENT_PAUSED_KEY.to_string(), "true".to_string()),
+            ("OLD".to_string(), "value".to_string()),
+        ]);
+        replace_managed_agent_user_env(
+            &mut env,
+            std::collections::BTreeMap::from([("NEW".to_string(), "value".to_string())]),
+        );
+
+        assert!(managed_agent_paused(&env));
+        assert!(!env.contains_key("OLD"));
+        assert_eq!(env.get("NEW").map(String::as_str), Some("value"));
+    }
+
+    #[test]
+    fn task_bound_lazy_workers_release_quickly() {
+        assert_eq!(idle_pool_sleep_env(true, true), "5");
+        assert_eq!(idle_pool_sleep_env(true, false), "900");
+        assert_eq!(idle_pool_sleep_env(false, true), "0");
+    }
 
     #[test]
     fn buzz_agent_provider_defaults_empty_in_oss_build() {

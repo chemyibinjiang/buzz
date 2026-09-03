@@ -340,3 +340,19 @@
 - 处理：推翻上一条未合并的 kill-on-quit 方案。Windows 首次启动 shared app-server 前，将 `codex.exe`、Code Mode host、command runner 和 sandbox setup 复制到 Buzz 管理的版本化不可变目录；成功启动后主动释放 `Child` 句柄，让 backend 跨 Buzz 退出继续服务，而 Codex 更新不再被锁。启动探测失败时仍只回收本次新进程。显式 Stop 改为对已跟踪 `Child` 调用 `try_wait`，仍运行时终止整棵进程树并等待退出，然后清理 receipt/session cache；Agent 身份和 Codex task 绑定保持不变。
 - 验证：Codex lifecycle Rust 测试 11/11、runtime command 测试 10/10、前端 Agent Connect/Disconnect 行为测试 8/8 通过。新增测试确认版本更新产生新缓存且旧版本保持可执行、Buzz 丢弃子进程句柄后 backend 仍存活，以及 Windows Stop 确实终止运行中的进程树。`managed_agents` 扩展测试 980 通过、5 失败；失败均为 Windows 环境无法启动 Unix `env`/`true` 或 PATH 占位命令的既有跨平台夹具，不涉及本次修改路径。
 - 版本/提交：分支 `codex/codex-lifecycle-cleanup`，待提交。
+
+## 2026-09-03：Codex task 绑定、Buzz 在线与 task 写锁解耦
+
+- 现象：现有流程把“绑定 task”“让 Agent 在 Buzz 上线”和“加载 Codex task”混在一次 Start 中；即使尚无消息需要处理，task-bound Agent 也会立即恢复 session 并占用 writer。用户同时已有本地与 SSH Codex task，UI 又没有明确展示绑定位置，容易误判 Desktop 冲突或操作错电脑。
+- 定位：Desktop 对 task-bound Agent 启动时关闭了 `BUZZ_ACP_LAZY_POOL`，`buzz-acp` 配置层也再次强制禁用 lazy，并在发布 online presence 前无条件调用 `preload_identity_session`。实际消息处理路径已经支持在首个 prompt 到达时按绑定恢复精确 task，因此启动期预加载并非必要。SSH 绑定已有独立的 tunnel、remote workspace 和 `BUZZ_ACP_CODEX_TASK_REMOTE` 路径，不需要改连接层。
+- 处理：task-bound Agent 统一以 lazy harness 启动，先连接 relay、订阅消息并发布在线状态，但不创建 ACP worker、不加载 task；首个被接受的工作到达后才唤醒 worker 并恢复绑定 session。完成一轮工作并空闲 5 秒后回收 task-bound worker，保留 Buzz 身份、订阅和绑定。普通 Agent 继续沿用原有 eager 行为。绑定弹窗改用 `Bind task`，明确绑定本身不会启动或接管 task；本地 Desktop 私有 runtime 冲突不再阻止保存绑定，但会提示执行工作前接入 shared runtime。Agent 卡片增加 `Local Codex task` / `SSH · host` 标识，SSH 断开提示也明确远端 task 和文件不受影响。
+- 验证：Desktop 定向 UI/控制测试 12/12、完整单测 4901/4901、TypeScript 类型检查和 E2E build 通过；Tauri `task_bound` 回归 6/6、`buzz-acp` lazy/idle 定向测试 12/12 通过，覆盖 SSH remote 标记与 workspace 保留。1440×900 Playwright 截图确认绑定弹窗、SSH 入口、task/model/workspace 和按钮布局正常。`buzz-acp --lib` 全量在当前 Windows 主机为 773 通过、49 失败，失败来自既有 Unix `cat`/Bash 测试夹具和并发计时，不涉及本次改动的定向路径。
+- 版本/提交：基于 `f9b476f9`，分支 `codex/mobile-lan-relay-fast-path`；待提交。
+
+## 2026-09-03：Managed Agent Pause 与逐消息 Queue/Steer
+
+- 现象：Agent 只有 Start/Stop，无法保持 Buzz 在线但暂缓接活；Agent 正在处理 task 时，聊天框也无法明确选择“排队等待”还是“注入当前轮次”，Stop 还会取代正常发送按钮。
+- 定位：harness 只有进程生命周期和全局 `multiple_event_handling`，缺少可热切换的接活状态；消息事件没有携带发送者本次选择，Desktop 因此无法把 Queue/Steer 意图传到各自的 Agent。task-bound worker 若在暂停期间仍把排队消息视为活跃工作，也会长期保留 Codex task 写锁。
+- 处理：新增 owner-only 的 `set_paused` observer control。Pause 保持 relay 连接并发布 away presence，当前 turn 正常完成，新消息留在队列；task-bound worker 空闲 5 秒后仍释放写锁，Resume 再唤醒 worker 并处理队列。Pause 状态持久化到 Desktop 管理的保留标记，重启后继续生效且普通环境变量编辑不会清除它。聊天框在 Agent 活跃时显示 Queue/Steer 分段选择，同时保留 Stop 与 Send；消息通过 `buzz/agent-dispatch` 标签传给 harness，未带标签的旧客户端继续沿用 Agent 默认策略。SSH task 仍走原有远端 app-server/tunnel 路径。
+- 验证：Desktop 全量单测 4901/4901、Pause 卡片 E2E 1/1、Queue/Steer 发送 E2E 1/1、TypeScript 类型检查、E2E build、Biome lint 与文本缩放门禁通过；`buzz-acp` Pause/dispatch、idle re-sleep 定向测试 13/13，Tauri 本地/SSH task 懒加载、dispatch tag 与 Pause 标记定向测试通过；两个 Rust crate 均通过 `cargo check`。现有 lint 仍报告两个与本次无关的 warning。
+- 版本/提交：基于 `f9b476f9`，分支 `codex/mobile-lan-relay-fast-path`；待提交。

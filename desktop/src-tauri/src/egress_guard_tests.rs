@@ -166,6 +166,7 @@ fn boundary_huddle_stt_blocks_ncryptsec() {
         &[],
         &[],
         None,
+        None,
         &crate::relay::relay_api_base_url(),
     )
     .unwrap();
@@ -182,6 +183,7 @@ fn boundary_huddle_stt_blocks_ncryptsec() {
         &[],
         &[],
         &[],
+        None,
         None,
         &crate::relay::relay_api_base_url(),
     )

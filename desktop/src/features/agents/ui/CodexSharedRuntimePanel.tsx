@@ -26,8 +26,10 @@ import {
 import { Button } from "@/shared/ui/button";
 
 export function CodexSharedRuntimePanel({
+  bindingOnly = false,
   enabled = true,
 }: {
+  bindingOnly?: boolean;
   enabled?: boolean;
 }) {
   const statusQuery = useCodexSharedRuntimeQuery({ enabled });
@@ -126,7 +128,9 @@ export function CodexSharedRuntimePanel({
             </p>
             <p className="text-sm leading-5 text-muted-foreground">
               {conflict
-                ? "Codex Desktop is running outside the shared runtime. Reconnect it before opening this task from Buzz."
+                ? bindingOnly
+                  ? "Codex Desktop is running outside the shared runtime. You can bind a task now; reconnect Desktop before Buzz runs work in it."
+                  : "Codex Desktop is running outside the shared runtime. Reconnect it before opening this task from Buzz."
                 : !adapterReady
                   ? "Buzz will install its private Codex ACP adapter, verify it, and then start the shared app-server."
                   : usable

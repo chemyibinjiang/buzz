@@ -7,6 +7,8 @@ pub(crate) mod team_snapshot;
 pub(crate) use access_policy::{owner_only, owner_only_access_build, projected_access_with_policy};
 pub(crate) use agent_env::{
     baked_build_env, build_buzz_agent_provider_defaults, discovery_env_with_baked_floor,
+    managed_agent_paused, replace_managed_agent_user_env, set_managed_agent_paused,
+    MANAGED_AGENT_PAUSED_KEY,
 };
 mod backend;
 mod codex_desktop;

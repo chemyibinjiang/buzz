@@ -560,6 +560,7 @@ pub struct ManagedAgentSummary {
     pub restart_diff: Vec<super::spawn_snapshot::RestartDiffEntry>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env_vars: BTreeMap<String, String>,
+    pub paused: bool,
     pub backend: BackendKind,
     pub backend_agent_id: Option<String>,
     pub status: String,

@@ -59,7 +59,10 @@ import { useDraftPersistLifecycle } from "./useDraftPersistSnapshot";
 import { submitMessageEdit } from "./submitMessageEdit";
 import { useComposerLinkPreviews } from "./useComposerLinkPreviews";
 import { scheduleSettleGatedAutoSubmit } from "./messageComposerAutoSubmit";
-import type { MessageComposerProps } from "./MessageComposer.types";
+import type {
+  AgentDispatchMode,
+  MessageComposerProps,
+} from "./MessageComposer.types";
 import {
   useManagedAgentsQuery,
   useRelayAgentsQuery,
@@ -185,6 +188,13 @@ function MessageComposerImpl({
     managedAgentsQuery.data,
     relayAgentsQuery.data,
   ]);
+  const [agentDispatchMode, setAgentDispatchMode] =
+    React.useState<AgentDispatchMode>("queue");
+  React.useEffect(() => {
+    if (interruptibleAgents.length === 0) {
+      setAgentDispatchMode("queue");
+    }
+  }, [interruptibleAgents.length]);
   const [stoppingAgentPubkeys, setStoppingAgentPubkeys] = React.useState<
     string[]
   >([]);
@@ -663,6 +673,7 @@ function MessageComposerImpl({
     persistentMentionHydration.beginSubmit();
     try {
       await mentionSendFlow.sendMessageWithMentionFlow({
+        agentDispatchMode,
         capturedChannelId: channelId,
         capturedThreadContext,
         pendingImeta: currentPendingImeta,
@@ -708,6 +719,7 @@ function MessageComposerImpl({
     onCaptureSendContext,
     onPreparingMentionSendChange,
     audienceScope,
+    agentDispatchMode,
     persistentMentionHydration,
     persistentAudience.generation,
     persistentAudience.revision,
@@ -1069,16 +1081,19 @@ function MessageComposerImpl({
               isSending={isSending}
               isUploading={media.isUploading}
               onCaptureSelection={handleCaptureSelection}
+              agentDispatchMode={agentDispatchMode}
               onEmojiPickerOpenChange={setIsEmojiPickerOpen}
               onEmojiSelect={insertEmoji}
               onFormattingToggle={handleFormattingToggle}
               onLinkButton={linkEditor.openFromToolbar}
               onOpenMentionPicker={openMentionPicker}
               onPaperclip={handlePaperclipClick}
+              onAgentDispatchModeChange={setAgentDispatchMode}
               onStopAgents={
                 interruptibleAgents.length > 0 ? handleStopAgents : undefined
               }
               sendDisabled={sendDisabled}
+              showAgentDispatchMode={interruptibleAgents.length > 0}
               stoppableAgents={interruptibleAgents}
               stoppingAgentPubkeys={stoppingAgentPubkeys}
             />

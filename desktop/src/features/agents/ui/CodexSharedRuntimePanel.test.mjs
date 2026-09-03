@@ -135,6 +135,42 @@ test("conflict takeover requires confirmation and refreshes status", async (t) =
   assert.equal(screen.queryByText("Codex Desktop runtime conflict"), null);
 });
 
+test("binding mode allows saving a task before Desktop reconnects", async (t) => {
+  window.__TAURI_INTERNALS__ = {
+    invoke(command) {
+      if (command === "get_codex_shared_runtime_status") {
+        return Promise.resolve(CONFLICT_STATUS);
+      }
+      if (command === "discover_acp_providers") {
+        return Promise.resolve([codexRuntime("available")]);
+      }
+      return Promise.reject(new Error(`unexpected Tauri command: ${command}`));
+    },
+  };
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  t.after(() => {
+    cleanup();
+    client.clear();
+    delete window.__TAURI_INTERNALS__;
+  });
+
+  render(
+    React.createElement(
+      QueryClientProvider,
+      { client },
+      React.createElement(CodexSharedRuntimePanel, {
+        bindingOnly: true,
+        enabled: true,
+      }),
+    ),
+  );
+
+  await screen.findByText(/You can bind a task now/);
+  assert.ok(screen.getByRole("button", { name: "Take over Codex Desktop" }));
+});
+
 test("setup installs Codex ACP before enabling the shared runtime", async (t) => {
   const commands = [];
   let installed = false;

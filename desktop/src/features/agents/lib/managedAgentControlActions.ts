@@ -142,7 +142,9 @@ export async function stopManagedAgentWithRules({
   await stopManagedAgent(agent.pubkey);
   return agent.codexTaskBinding
     ? {
-        noticeMessage: `Disconnected Buzz from ${agent.codexTaskBinding.threadName}. Other clients connected to the shared Codex runtime can continue.`,
+        noticeMessage: agent.codexTaskBinding.sshHost
+          ? `Disconnected Buzz from ${agent.codexTaskBinding.threadName}. The remote Codex task and its files are unchanged.`
+          : `Disconnected Buzz from ${agent.codexTaskBinding.threadName}. Codex Desktop can continue through the shared runtime.`,
       }
     : {};
 }

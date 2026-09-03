@@ -107,6 +107,7 @@ export type MockManagedAgentSeed = {
   needsRestart?: boolean;
   restartDiff?: Array<{ field: string; change: unknown }>;
   autoRestartOnConfigChange?: boolean;
+  paused?: boolean;
   respondTo?: RawManagedAgent["respond_to"];
   respondToAllowlist?: string[];
   /** Per-agent env vars seeded into the mock store. */
@@ -884,6 +885,7 @@ type RawManagedAgent = {
   model: string | null;
   provider?: string | null;
   env_vars?: Record<string, string>;
+  paused?: boolean;
   status: "running" | "stopped" | "deployed" | "not_deployed";
   pid: number | null;
   created_at: string;
@@ -1723,6 +1725,7 @@ function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
     model: agent.model,
     provider: agent.provider ?? null,
     env_vars: { ...(agent.env_vars ?? {}) },
+    paused: agent.paused ?? false,
     status: agent.status,
     pid: agent.pid,
     created_at: agent.created_at,
@@ -2287,6 +2290,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     avatar_url: seed.avatarUrl ?? null,
     model: null,
     env_vars: { ...(seed.envVars ?? {}) },
+    paused: seed.paused ?? false,
     status,
     pid: status === "running" ? 42000 + mockManagedAgents.length : null,
     created_at: now,
@@ -8573,6 +8577,7 @@ async function handleCreateManagedAgent(
     model: args.input.model?.trim() || linkedPersona?.model || null,
     provider: args.input.provider?.trim() || linkedPersona?.provider || null,
     env_vars: { ...(args.input.envVars ?? {}) },
+    paused: false,
     status: args.input.spawnAfterCreate ? "running" : "stopped",
     pid: args.input.spawnAfterCreate ? 42000 + mockManagedAgents.length : null,
     created_at: now,
@@ -8800,6 +8805,16 @@ async function handleSetManagedAgentStartOnAppLaunch(args: {
 }): Promise<RawManagedAgent> {
   const agent = getMockManagedAgent(args.pubkey);
   agent.start_on_app_launch = args.startOnAppLaunch;
+  agent.updated_at = new Date().toISOString();
+  return cloneManagedAgent(agent);
+}
+
+async function handleSetManagedAgentPaused(args: {
+  pubkey: string;
+  paused: boolean;
+}): Promise<RawManagedAgent> {
+  const agent = getMockManagedAgent(args.pubkey);
+  agent.paused = args.paused;
   agent.updated_at = new Date().toISOString();
   return cloneManagedAgent(agent);
 }
@@ -9164,6 +9179,7 @@ async function handleSendChannelMessage(
     mentionTags?: string[][] | null;
     linkPreviewTags?: string[][] | null;
     sentFromThreadTag?: string[] | null;
+    agentDispatch?: "queue" | "steer" | null;
     suppressLinkPreviews?: boolean;
   },
   config: E2eConfig | undefined,
@@ -9234,6 +9250,9 @@ async function handleSendChannelMessage(
     ...mentionTags,
     ...linkPreviewTags,
     ...(args.sentFromThreadTag ? [args.sentFromThreadTag] : []),
+    ...(args.agentDispatch
+      ? [["buzz", "agent-dispatch", args.agentDispatch]]
+      : []),
     ...(args.suppressLinkPreviews ? [["link-preview", "none"]] : []),
   ];
   const identity = getIdentity(config);
@@ -12530,6 +12549,10 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<
             typeof handleSetManagedAgentStartOnAppLaunch
           >[0],
+        );
+      case "set_managed_agent_paused":
+        return handleSetManagedAgentPaused(
+          payload as Parameters<typeof handleSetManagedAgentPaused>[0],
         );
       case "delete_managed_agent":
         return handleDeleteManagedAgent(

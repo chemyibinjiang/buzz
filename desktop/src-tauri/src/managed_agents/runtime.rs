@@ -354,7 +354,13 @@ pub fn build_managed_agent_summary(
         persona_orphaned,
         needs_restart,
         restart_diff,
-        env_vars: record.env_vars.clone(),
+        env_vars: record
+            .env_vars
+            .iter()
+            .filter(|(key, _)| key.as_str() != super::MANAGED_AGENT_PAUSED_KEY)
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        paused: super::managed_agent_paused(&record.env_vars),
         backend: record.backend.clone(),
         backend_agent_id: record.backend_agent_id.clone(),
         status,
@@ -580,7 +586,15 @@ pub fn spawn_agent_child(
     command.env("BUZZ_RELAY_URL", &effective_relay_url);
     command.env(
         "BUZZ_ACP_IDLE_POOL_SLEEP",
-        idle_pool_sleep_env(lazy && codex_task_binding.is_none()),
+        idle_pool_sleep_env(lazy, codex_task_binding.is_some()),
+    );
+    command.env(
+        "BUZZ_ACP_START_PAUSED",
+        if super::managed_agent_paused(&record.env_vars) {
+            "true"
+        } else {
+            "false"
+        },
     );
     command.env("BUZZ_ACP_AGENT_COMMAND", &resolved_agent_command);
     command.env("BUZZ_ACP_AGENT_ARGS", agent_args.join(","));
@@ -1009,7 +1023,8 @@ pub fn start_managed_agent_process(
         )
     };
     let key = ManagedAgentRuntimeKey::new(record.pubkey.clone(), &relay_url)?;
-    if super::load_codex_task_binding(app, &record.pubkey)?.is_some() {
+    let task_bound = super::load_codex_task_binding(app, &record.pubkey)?.is_some();
+    if task_bound {
         stop_other_managed_agent_pairs(app, record, runtimes, &key)?;
         use tauri::Manager;
         let state = app.state::<crate::app_state::AppState>();
@@ -1037,7 +1052,7 @@ pub fn start_managed_agent_process(
     // Scalar PIDs are migration-only and never establish pair liveness.
     record.runtime_pid = None;
 
-    let mut process = spawn_agent_child(app, record, &key.relay_url, false, owner_hex)?;
+    let mut process = spawn_agent_child(app, record, &key.relay_url, task_bound, owner_hex)?;
     let now = now_iso();
     let receipt = super::ManagedAgentRuntimeReceipt {
         key: key.clone(),
