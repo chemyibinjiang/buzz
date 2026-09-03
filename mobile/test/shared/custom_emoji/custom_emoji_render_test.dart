@@ -7,10 +7,7 @@ import 'package:gpt_markdown/custom_widgets/markdown_config.dart';
 const _palette = [
   CustomEmoji(shortcode: 'wave', url: 'https://example.com/wave.png'),
   CustomEmoji(shortcode: 'wave_long', url: 'https://example.com/long.png'),
-  CustomEmoji(
-    shortcode: 'party-parrot',
-    url: 'https://example.com/parrot.png',
-  ),
+  CustomEmoji(shortcode: 'party-parrot', url: 'https://example.com/parrot.png'),
 ];
 
 void main() {
@@ -40,7 +37,7 @@ void main() {
           .allMatches(':unknown:wave: :wave:unknown:wave_long:')
           .map((match) => match.group(0))
           .toList(),
-      [':wave:', ':wave_long:'],
+      [':wave:', ':wave:', ':wave_long:'],
     );
   });
 

@@ -57,38 +57,35 @@ void main() {
     },
   );
 
-  test(
-    'subscribes in one #h chunk for joined non-archived channels',
-    () async {
-      final session = _FakeRelaySession(
-        memberships: [
-          _membership(_channelA, myPk),
-          _membership(_channelB, myPk),
-          _membership(_channelD, myPk),
-        ],
-        metadata: [
-          _meta(id: _channelA, name: 'general'),
-          _meta(id: _channelB, name: 'random'),
-          // channelD metadata missing -> won't appear in channel list
-        ],
-      );
-      final container = _buildContainer(session: session);
-      addTearDown(container.dispose);
+  test('subscribes in one #h chunk for joined non-archived channels', () async {
+    final session = _FakeRelaySession(
+      memberships: [
+        _membership(_channelA, myPk),
+        _membership(_channelB, myPk),
+        _membership(_channelD, myPk),
+      ],
+      metadata: [
+        _meta(id: _channelA, name: 'general'),
+        _meta(id: _channelB, name: 'random'),
+        // channelD metadata missing -> won't appear in channel list
+      ],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
 
-      await container.read(channelsProvider.future);
-      await _waitUntil(() => session.subscribeFilters.isNotEmpty);
+    await container.read(channelsProvider.future);
+    await _waitUntil(() => session.subscribeFilters.isNotEmpty);
 
-      expect(session.subscribeFilters, hasLength(1));
-      expect(
-        session.subscribeFilters.single.tags['#h']?.toSet(),
-        {_channelA, _channelB},
-      );
-      for (final filter in session.subscribeFilters) {
-        expect(filter.kinds, EventKind.channelEventKinds);
-        expect(filter.limit, 0);
-      }
-    },
-  );
+    expect(session.subscribeFilters, hasLength(1));
+    expect(session.subscribeFilters.single.tags['#h']?.toSet(), {
+      _channelA,
+      _channelB,
+    });
+    for (final filter in session.subscribeFilters) {
+      expect(filter.kinds, EventKind.channelEventKinds);
+      expect(filter.limit, 0);
+    }
+  });
 
   test('publishes the channel snapshot before live setup completes', () async {
     final session = _FakeRelaySession(
@@ -824,8 +821,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   int totalSubscribeCount = 0;
 
   Set<String> get activeChannels => {
-    for (final (filter, _) in _subscriptions.values)
-      ...?filter.tags['#h'],
+    for (final (filter, _) in _subscriptions.values) ...?filter.tags['#h'],
   };
 
   int get activeSubscriptionCount => _subscriptions.length;

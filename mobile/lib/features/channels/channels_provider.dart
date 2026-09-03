@@ -40,7 +40,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 
   final Map<String, _LiveChunkSubscription> _liveSubscriptionsByChunk = {};
   Future<void> _liveSubscriptionQueue = Future.value();
-  List<Channel> _desiredLiveChannels = const [];
   Set<String> _desiredLiveChannelIds = const {};
   final Set<String> _terminallyClosedLiveChunks = {};
   int _nextLiveChunkGeneration = 0;
@@ -576,6 +575,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         filters,
         operation: 'unread catch-up',
       );
+      if (!_lifecycleRef.mounted) return;
 
       for (final event in events) {
         if (event.pubkey.toLowerCase() == myPk.toLowerCase()) {
@@ -608,6 +608,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       debugPrint('[ChannelsNotifier] unread catch-up failed: $error');
     }
 
+    if (!_lifecycleRef.mounted) return;
     state = state.whenData((channels) => List<Channel>.of(channels));
   }
 
@@ -780,7 +781,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     if (sessionState.status != SessionStatus.connected) return;
     state = await AsyncValue.guard(() => _fetch(subscribeLive: true));
   }
-
 }
 
 final channelsProvider = AsyncNotifierProvider<ChannelsNotifier, List<Channel>>(

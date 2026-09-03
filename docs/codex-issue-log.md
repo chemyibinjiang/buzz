@@ -293,3 +293,11 @@
 - 处理：按 Block 上游 `e5a7e26a1` 调整身份恢复顺序，先尝试有效文件恢复；存在迁移标记但无法恢复时进入 `Lost` 且保留 keyring 值，仅在无标记的首次启动路径中清理并生成新身份。按上游 `6f6093243` 为 profile 批量查询增加 3 次指数退避，并只在查询已处于 error 时随窗口重新聚焦而重试。
 - 验证：`app_state::` 定向 Rust 测试 50/50 通过，新增 profile 韧性测试 2/2 通过，`pnpm typecheck` 与 `cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all` 通过；仓库 `just desktop-tauri-fmt` 仅因当前 PowerShell 环境找不到 `sh` 未能启动，其内部相同的 cargo fmt 命令已直接执行成功。
 - 版本/提交：基于 `19902806e`，参考 Block 上游 `e5a7e26a1` 与 `6f6093243`；本地待提交。
+
+## 2026-09-03：Flutter 工具链恢复与移动端全量验证
+
+- 现象：上一轮 Mobile 冷启动优化因本机找不到可调用的 Flutter SDK，只完成了代码审查和新增测试，尚未实际运行 `flutter analyze/test`。
+- 定位：项目的 `mobile/android/local.properties` 已指向用户级 Flutter `3.41.7`，SDK 文件完整但未加入系统 `PATH`。首次执行目标测试进一步暴露出一个真实竞态：频道快照返回后，异步未读补拉可能在 Riverpod provider 已释放时写入 `state`；自定义 emoji 的共享冒号测试也漏算了正文中一个合法的 `:wave:` 出现位置。
+- 处理：直接通过绝对路径使用仓库锁定的 Flutter `3.41.7` / Dart `3.11.5`，不修改系统 `PATH`；在未读补拉的网络等待后及最终状态写入前检查 provider 是否仍挂载，释放后丢弃异步结果；修正 emoji 测试期望并应用 Dart formatter，删除静态分析发现的未使用订阅字段。
+- 验证：`flutter doctor -v` 确认 Android SDK 35、JDK 17、许可证和已连接 Android 16 平板均正常；`flutter pub get`、全项目 Dart 格式检查、`flutter analyze` 均通过；目标回归测试 24/24、完整 `flutter test` 1388/1388 通过。文件大小门禁仍只报告当前分支已有的 `compose_bar_widget.dart`、`media_upload.dart` 和 `relay_session.dart` 超限，没有新增超限文件。
+- 版本/提交：基于 `34676df49`；移动端生命周期修复待提交。

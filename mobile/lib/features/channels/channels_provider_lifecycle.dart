@@ -7,11 +7,10 @@ extension _ChannelsNotifierLiveSubscriptions on ChannelsNotifier {
         if (channel.isMember && !channel.isArchived) channel.id,
     };
     final relayBaseUrl = _lifecycleRef.read(relayConfigProvider).baseUrl;
-    _desiredLiveChannels = channels;
     _desiredLiveChannelIds = channelIds;
-    final desiredKeys = _chunkLiveChannelIds(channelIds)
-        .map(_liveChunkKey)
-        .toSet();
+    final desiredKeys = _chunkLiveChannelIds(
+      channelIds,
+    ).map(_liveChunkKey).toSet();
     _terminallyClosedLiveChunks.retainAll(desiredKeys);
     final subscriptionVersion = ++_subscriptionVersion;
 
@@ -165,7 +164,6 @@ extension _ChannelsNotifierLiveSubscriptions on ChannelsNotifier {
 
   void _clearLiveSubscriptions() {
     _subscriptionVersion++;
-    _desiredLiveChannels = const [];
     _desiredLiveChannelIds = const {};
     _terminallyClosedLiveChunks.clear();
     _clearRetainedLiveChunks();
