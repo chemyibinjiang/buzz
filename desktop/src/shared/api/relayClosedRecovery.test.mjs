@@ -60,7 +60,7 @@ function resetAll(startMs = 0) {
   resetRateLimitGate();
 }
 
-test("production CLOSED handler rejects history once and clears its timeout", () => {
+test("non-rate-limited CLOSED rejects history once and clears its timeout", () => {
   const originalWindow = globalThis.window;
   const clearedTimeouts = [];
   globalThis.window = {
@@ -76,10 +76,12 @@ test("production CLOSED handler rejects history once and clears its timeout", ()
         "history-1",
         {
           mode: "history",
+          filter: { kinds: [0], authors: ["pubkey-1"], limit: 10 },
           events: [],
           resolve: () => assert.fail("CLOSED must not resolve history"),
           reject: (error) => errors.push(error),
           timeout: 42,
+          timeoutMs: 25_000,
         },
       ],
     ]);
@@ -90,19 +92,137 @@ test("production CLOSED handler rejects history once and clears its timeout", ()
     };
     handleRelayClosed({
       ...input,
-      message: "rate-limited: too many concurrent requests",
+      message: "error: database unavailable",
     });
     handleRelayClosed({ ...input, message: "late CLOSED" });
     assert.equal(subscriptions.has("history-1"), false);
     assert.deepEqual(clearedTimeouts, [42]);
     assert.equal(errors.length, 1);
-    assert.equal(
-      errors[0].message,
-      "rate-limited: too many concurrent requests",
-    );
+    assert.equal(errors[0].message, "error: database unavailable");
   } finally {
     globalThis.window = originalWindow;
   }
+});
+
+test("rate-limited history CLOSED rotates and retries after the gate", () => {
+  resetAll(0);
+  const errors = [];
+  const requests = [];
+  const filter = { kinds: [9], "#h": ["channel-1"], limit: 50 };
+  const subscriptions = new Map([
+    [
+      "history-rate-limited",
+      {
+        mode: "history",
+        filter,
+        events: [],
+        resolve: () => assert.fail("retry must not resolve before EOSE"),
+        reject: (error) => errors.push(error),
+        timeout: 42,
+        timeoutMs: 25_000,
+      },
+    ],
+  ]);
+
+  handleRelayClosed({
+    subscriptions,
+    subId: "history-rate-limited",
+    message: "rate-limited: quota exceeded; retry in 5s",
+    sendReq: (subId, requestFilter) => {
+      requests.push({ subId, filter: requestFilter });
+      return Promise.resolve();
+    },
+  });
+
+  assert.equal(errors.length, 0);
+  assert.equal(subscriptions.has("history-rate-limited"), false);
+  assert.equal(subscriptions.size, 1);
+  assert.equal(requests.length, 0);
+
+  tickTo(5_001);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].filter, filter);
+});
+
+test("rate-limited history CLOSED rejects after three retries", () => {
+  resetAll(0);
+  const errors = [];
+  const requests = [];
+  const subscription = {
+    mode: "history",
+    filter: { kinds: [9], "#h": ["channel-2"], limit: 50 },
+    events: [],
+    resolve: () => assert.fail("exhausted retry must not resolve"),
+    reject: (error) => errors.push(error),
+    timeout: 0,
+    timeoutMs: 25_000,
+  };
+  const subscriptions = new Map([["history-retry", subscription]]);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const currentSubId = [...subscriptions.keys()][0];
+    handleRelayClosed({
+      subscriptions,
+      subId: currentSubId,
+      message: "rate-limited: quota exceeded; retry in 1s",
+      sendReq: (subId) => {
+        requests.push(subId);
+        return Promise.resolve();
+      },
+    });
+    assert.equal(errors.length, 0);
+    tickTo((attempt + 1) * 1_001);
+    assert.equal(requests.length, attempt + 1);
+  }
+
+  handleRelayClosed({
+    subscriptions,
+    subId: [...subscriptions.keys()][0],
+    message: "rate-limited: quota exceeded; retry in 1s",
+    sendReq: () => Promise.resolve(),
+  });
+
+  assert.equal(errors.length, 1);
+  assert.equal(subscriptions.size, 0);
+});
+
+test("history retry timeout closes the rotated subscription", () => {
+  resetAll(0);
+  const errors = [];
+  const closedSubIds = [];
+  const subscriptions = new Map([
+    [
+      "history-timeout",
+      {
+        mode: "history",
+        filter: { kinds: [9], "#h": ["channel-3"], limit: 50 },
+        events: [],
+        resolve: () => assert.fail("timed out retry must not resolve"),
+        reject: (error) => errors.push(error),
+        timeout: 0,
+        timeoutMs: 5_000,
+      },
+    ],
+  ]);
+
+  handleRelayClosed({
+    subscriptions,
+    subId: "history-timeout",
+    message: "rate-limited: quota exceeded; retry in 1s",
+    sendReq: () => Promise.resolve(),
+    closeSubscription: async (subId) => {
+      closedSubIds.push(subId);
+    },
+  });
+
+  const rotatedSubId = [...subscriptions.keys()][0];
+  tickTo(1_001);
+  tickTo(6_002);
+
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].message, "Relay history retry timed out.");
+  assert.deepEqual(closedSubIds, [rotatedSubId]);
+  assert.equal(subscriptions.size, 0);
 });
 
 test("rate-limited history CLOSED arms the shared gate for concurrent ops", () => {
@@ -112,10 +232,12 @@ test("rate-limited history CLOSED arms the shared gate for concurrent ops", () =
       "history-1",
       {
         mode: "history",
+        filter: { kinds: [0], authors: ["pubkey-1"], limit: 10 },
         events: [],
         resolve: () => {},
         reject: () => {},
         timeout: 0,
+        timeoutMs: 25_000,
       },
     ],
   ]);
@@ -142,10 +264,12 @@ test("non-rate-limited history CLOSED does not arm the gate", () => {
       "history-2",
       {
         mode: "history",
+        filter: { kinds: [9], "#h": ["channel-1"], limit: 50 },
         events: [],
         resolve: () => {},
         reject: () => {},
         timeout: 0,
+        timeoutMs: 25_000,
       },
     ],
   ]);
@@ -173,10 +297,12 @@ test("gate armed by rate-limited history CLOSED defers the next REQ until expiry
       "history-gate",
       {
         mode: "history",
+        filter: { kinds: [9], "#h": ["channel-gate"], limit: 50 },
         events: [],
         resolve: () => {},
         reject: () => {},
         timeout: 0,
+        timeoutMs: 25_000,
       },
     ],
   ]);
@@ -484,6 +610,19 @@ test("terminal CLOSED deletes subscription and does not retry", () => {
   );
   tickTo(10_000);
   assert.equal(firedAt.length, 0, "terminal CLOSED must not retry");
+});
+
+test("relay session wires CLOSE cleanup into history recovery", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(
+    new URL("./relayClientSession.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /closeSubscription:\s*\(subId\)\s*=>\s*this\.closeSubscription\(subId\)/,
+  );
 });
 
 // ── Teardown ──────────────────────────────────────────────────────────────────

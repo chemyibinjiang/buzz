@@ -9,7 +9,6 @@ import type {
   AgentPersona,
   Channel,
   ManagedAgent,
-  PresenceLookup,
   RelayAgent,
 } from "@/shared/api/types";
 import { getRelayAgentChannelIds } from "@/features/profile/ui/UserProfilePanelUtils";
@@ -32,18 +31,18 @@ type DeleteProfileManagedAgentsForPersonaContext =
 type UseProfileAgentDeletionInput = {
   channels?: readonly Channel[];
   deleteManagedAgent: DeleteManagedAgentRulesContext["deleteManagedAgent"];
+  getAvailability: DeleteManagedAgentRulesContext["getAvailability"];
   managedAgent?: ManagedAgent;
   managedAgents?: readonly ManagedAgent[];
-  presenceLookup?: PresenceLookup | null;
   relayAgents?: readonly RelayAgent[];
 };
 
 export function useProfileAgentDeletion({
   channels,
   deleteManagedAgent,
+  getAvailability,
   managedAgent,
   managedAgents,
-  presenceLookup,
   relayAgents,
 }: UseProfileAgentDeletionInput) {
   const removeAgentFromAllChannels = React.useCallback(
@@ -76,7 +75,7 @@ export function useProfileAgentDeletion({
       deleteProfileManagedAgent(agentToDelete, {
         channels: channels ?? [],
         deleteManagedAgent,
-        presenceLookup,
+        getAvailability,
         relayAgents: relayAgents ?? [],
         removeAgentFromAllChannels,
         skipRemoteDeleteConfirm: true,
@@ -84,7 +83,7 @@ export function useProfileAgentDeletion({
     [
       channels,
       deleteManagedAgent,
-      presenceLookup,
+      getAvailability,
       relayAgents,
       removeAgentFromAllChannels,
     ],
@@ -95,8 +94,8 @@ export function useProfileAgentDeletion({
       deleteProfileManagedAgentsForPersona(persona, {
         channels: channels ?? [],
         deleteManagedAgent,
+        getAvailability,
         managedAgents: managedAgents ?? [],
-        presenceLookup,
         relayAgents: relayAgents ?? [],
         removeAgentFromAllChannels,
         selectedAgent: managedAgent,
@@ -104,9 +103,9 @@ export function useProfileAgentDeletion({
     [
       channels,
       deleteManagedAgent,
+      getAvailability,
       managedAgent,
       managedAgents,
-      presenceLookup,
       relayAgents,
       removeAgentFromAllChannels,
     ],

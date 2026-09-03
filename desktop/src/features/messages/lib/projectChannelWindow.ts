@@ -26,10 +26,13 @@ export async function refreshChannelWindowMessages(
   queryClient: QueryClient,
   channelId: string,
 ) {
-  await queryClient.invalidateQueries({
-    queryKey: channelMessagesKey(channelId),
-    exact: true,
-    refetchType: "active",
-  });
+  await queryClient.invalidateQueries(
+    {
+      queryKey: channelMessagesKey(channelId),
+      exact: true,
+      refetchType: "active",
+    },
+    { throwOnError: true },
+  );
   projectChannelWindowMessages(queryClient, channelId);
 }

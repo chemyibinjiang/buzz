@@ -224,6 +224,7 @@ export function AgentsView() {
           <div className="flex flex-col gap-8">
             <UnifiedAgentsSection
               defaultModel={inheritedDefaults.model.value}
+              getAvailability={agents.getAvailability}
               actionErrorMessage={agents.actionErrorMessage}
               actionNoticeMessage={agents.actionNoticeMessage}
               agents={agents.managedAgents}

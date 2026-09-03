@@ -12,6 +12,7 @@ import {
   getManagedAgentPrimaryActionLabel,
   isManagedAgentActive,
 } from "@/features/agents/lib/managedAgentControlActions";
+import { agentPresenceStartBlockReason } from "@/features/agents/lib/useAgentAvailability";
 import { RestartDiffBadge } from "@/features/agents/ui/RestartDiffBadge";
 import { AgentConfigPanel } from "@/features/agents/ui/AgentConfigPanel";
 import type { IdentityArchiveActions } from "@/features/identity-archive/hooks";
@@ -248,13 +249,6 @@ export function ProfileSummaryView({
   userStatus,
 }: ProfileSummaryViewProps) {
   const activeTurns = useAgentWorking(isBot ? pubkey : null).channels;
-  const avatarStatus = isBot
-    ? managedAgent
-      ? isManagedAgentActive(managedAgent)
-        ? "online"
-        : "offline"
-      : (presenceStatus ?? "offline")
-    : presenceStatus;
   const stickyLayoutRef = React.useRef<HTMLDivElement>(null);
   const [primaryActionsConcealed, setPrimaryActionsConcealed] =
     React.useState(false);
@@ -499,7 +493,7 @@ export function ProfileSummaryView({
           displayName={displayName}
           isBot={isBot}
           onEditAgent={canEditAgent ? handleEditAgent : undefined}
-          presenceStatus={avatarStatus}
+          presenceStatus={presenceStatus}
           profile={profile}
           userStatus={userStatus}
         />
@@ -520,6 +514,14 @@ export function ProfileSummaryView({
           concealed={primaryActionsConcealed}
           followMutation={followMutation}
           agentActionDisabled={isAgentActionPending}
+          agentStartBlockReason={
+            managedAgent
+              ? agentPresenceStartBlockReason(
+                  isManagedAgentActive(managedAgent),
+                  presenceStatus,
+                )
+              : undefined
+          }
           agentActionLabel={
             isOwner === true && managedAgent
               ? getManagedAgentPrimaryActionLabel(managedAgent)

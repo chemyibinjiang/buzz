@@ -15,6 +15,11 @@ export type TimelineQueryStatus = {
   dataLength: number | null;
 };
 
+export type TimelineQueryLoadingStatus = TimelineQueryStatus & {
+  isEnabled: boolean;
+  isError: boolean;
+};
+
 export function selectTimelineLoadingState(
   status: TimelineQueryStatus,
   hasSettled = true,
@@ -50,6 +55,7 @@ export function resolveTimelineLoadingLatch(
   settledChannelId: string | null,
   activeChannelId: string | null,
   loadingNow: boolean,
+  canSettle = true,
 ): { settledChannelId: string | null; isLoading: boolean } {
   if (activeChannelId === null) {
     return { settledChannelId, isLoading: loadingNow };
@@ -58,9 +64,29 @@ export function resolveTimelineLoadingLatch(
     // Already settled for this channel — stay loaded through refetch blips.
     return { settledChannelId, isLoading: false };
   }
-  if (!loadingNow) {
+  if (!loadingNow && canSettle) {
     // First settle for this channel; latch it.
     return { settledChannelId: activeChannelId, isLoading: false };
   }
-  return { settledChannelId, isLoading: true };
+  return { settledChannelId, isLoading: loadingNow };
+}
+
+/** Keep a failed cold history request from settling as an empty channel. */
+export function resolveTimelineQueryLoadingState(
+  settledChannelId: string | null,
+  activeChannelId: string | null,
+  status: TimelineQueryLoadingStatus,
+): { settledChannelId: string | null; isLoading: boolean } {
+  const hasSettledThisChannel =
+    activeChannelId !== null && settledChannelId === activeChannelId;
+  const loadingNow =
+    status.isEnabled &&
+    selectTimelineLoadingState(status, hasSettledThisChannel);
+
+  return resolveTimelineLoadingLatch(
+    settledChannelId,
+    activeChannelId,
+    loadingNow,
+    !status.isError,
+  );
 }

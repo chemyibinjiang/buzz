@@ -278,6 +278,14 @@
 - 验证：公网首次连接约 53.5 ms，内网约 9.8 ms，首帧均为 NIP-42 AUTH challenge；公网 10/10 成功，连接与首帧耗时最小 19.4 ms、平均 36.5 ms、最大 123.7 ms。说明学校反代已透传 WebSocket Upgrade。尚未使用成员私钥完成 NIP-42 签名、订阅、发布闭环。
 - 版本/提交：线上 `.82` 部署验证；仅诊断和记录，未创建代码提交。
 
+## 2026-09-03：移植 Block 上游的 Relay 韧性、Agent 在线态与移动端冷启动优化
+
+- 现象：当前 Desktop 的历史订阅在 relay 返回 rate-limit `CLOSED` 后直接失败；Agent 卡片把本地 lifecycle 记录等同于在线状态；频道首次历史加载失败会显示成空频道。Mobile 同时串行等待每频道 live subscription，并为每条消息用整个社区 emoji 表构造正则，频道较多时冷启动和渲染明显变慢。
+- 定位：对照 Block 主线 `6f6093243`、`d5a73b9f3`、`00e61eafa` 和 `b593c7d7f`，四类问题都已在上游用独立机制处理：history CLOSED 透明重试、presence 作为 Agent availability 真值、显式 timeline error surface，以及先发布有限频道快照后分批建立 live subscription。当前分支与主线的 Mobile provider 已明显分叉，因此没有直接 cherry-pick。
+- 处理：Desktop history subscription 保存 filter/timeout，在共享 rate-limit gate 后换 subscription id 重试，最多 3 次并正确清理 CLOSE/timeout；Agent 启停、删除、卡片、profile pane/popover 统一从已连接 relay 的成功 presence 查询推导 availability，未知状态不再伪装 Offline；频道冷加载失败显示带 Retry 的错误态，已有缓存的刷新失败仍保留消息列表。Mobile 先返回频道快照，再按排序后的最多 128 个 `#h` 值建立 live subscription，替换订阅就绪前保留旧覆盖；emoji matcher 只包含正文实际引用的 shortcode；relay 的显式 `retry in 0s` 不再错误开启 10 秒全局 gate。
+- 验证：Desktop 相关 102 个测试、TypeScript、Biome 与 `git diff --check` 通过。新增 Mobile 测试覆盖快照不等待订阅、129 个频道分成 128+1、emoji 大词表裁剪和零秒 retry hint；当前 Windows 环境没有可调用的 Flutter SDK，未能执行 `flutter analyze/test`。Mobile 文件大小门禁仅报告当前分支已有的 `compose_bar_widget.dart`、`media_upload.dart` 和 `relay_session.dart` 超限；本次新增 lifecycle 为 203 行，`channels_provider.dart` 已降至 811 行，且没有增加 `relay_session.dart` 行数。
+- 版本/提交：基于 `19902806e`，参考 Block 上游上述四个提交；待提交。
+
 ## 2026-09-03：移植 Block 上游的身份恢复与 Profile 查询韧性修复
 
 - 现象：审计 `block/buzz` 最新主线时，需要筛选可安全移植到当前分支、并能改善身份丢失和头像/名称偶发加载失败的修复。

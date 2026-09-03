@@ -4,7 +4,7 @@ import 'package:buzz/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('uses the default for absent and non-positive hints', () {
+  test('uses the default only when the retry hint is absent', () {
     var now = DateTime.utc(2026);
     final timers = <_ManualTimer>[];
     final gate = RelayRateLimitGate(
@@ -22,7 +22,16 @@ void main() {
 
     now = now.add(const Duration(seconds: 11));
     gate.activate(0);
-    expect(timers.last.duration, const Duration(seconds: 10));
+    expect(timers, hasLength(1));
+    expect(gate.isActive, isFalse);
+    expect(gate.remainingMs(), 0);
+  });
+
+  test('an immediate hint does not shorten an existing gate', () {
+    final gate = RelayRateLimitGate(now: () => DateTime.utc(2026));
+    gate.activate(20);
+    gate.activate(0);
+    expect(gate.remainingMs(), 20000);
   });
 
   test('clamps large hints to five minutes', () {

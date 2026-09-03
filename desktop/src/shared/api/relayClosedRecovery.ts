@@ -28,23 +28,62 @@ export function handleRelayClosed({
   subId,
   message,
   sendReq,
+  closeSubscription,
 }: {
   subscriptions: Map<string, RelaySubscription>;
   subId: string;
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
+  closeSubscription?: (subId: string) => Promise<void>;
 }) {
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
   if (subscription.mode !== "live") {
-    // Classify before rejecting so a `rate-limited:` history CLOSED arms the
-    // gate for concurrent ops. A history sub can't be retried (the caller holds
-    // the promise), so we still reject immediately after arming.
+    // Classify before acting so a rate-limited CLOSED arms the shared gate for
+    // concurrent operations, even when this subscription cannot be retried.
     const closedClass = classifyRelayClosed(message);
     if (closedClass === "rate-limited") {
       const hintSeconds = parseRateLimitHint(message);
       activateRateLimit(hintSeconds);
+
+      if (subscription.mode === "history") {
+        const attempt = subscription.closedRetryAttempt ?? 0;
+        if (attempt < 3) {
+          subscription.closedRetryAttempt = attempt + 1;
+          window.clearTimeout(subscription.timeout);
+
+          const hintMs = (hintSeconds ?? 10) * 1_000;
+          const delayMs = Math.max(rateLimitRemainingMs() || hintMs, hintMs);
+          const newSubId = `history-${crypto.randomUUID()}`;
+          subscriptions.delete(subId);
+          subscriptions.set(newSubId, subscription);
+
+          subscription.timeout = window.setTimeout(() => {
+            if (subscriptions.get(newSubId) !== subscription) return;
+
+            subscription.timeout = window.setTimeout(() => {
+              if (subscriptions.get(newSubId) !== subscription) return;
+              subscriptions.delete(newSubId);
+              void closeSubscription?.(newSubId).catch(() => {});
+              subscription.reject(new Error("Relay history retry timed out."));
+            }, subscription.timeoutMs);
+
+            void sendReq(newSubId, subscription.filter).catch((error) => {
+              if (subscriptions.get(newSubId) !== subscription) return;
+              window.clearTimeout(subscription.timeout);
+              subscriptions.delete(newSubId);
+              subscription.reject(
+                error instanceof Error
+                  ? error
+                  : new Error("Failed to retry relay history subscription."),
+              );
+            });
+          }, delayMs);
+          return;
+        }
+      }
     }
+
     window.clearTimeout(subscription.timeout);
     subscriptions.delete(subId);
     subscription.reject(

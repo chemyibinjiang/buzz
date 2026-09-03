@@ -45,7 +45,7 @@ function normalizePubkeys(pubkeys: string[]) {
     .sort();
 }
 
-function presenceQueryKey(pubkeys: string[]) {
+export function presenceQueryKey(pubkeys: string[]) {
   return ["presence", ...normalizePubkeys(pubkeys)] as const;
 }
 

@@ -15,7 +15,6 @@ import {
 } from "@/features/agents/hooks";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { useChannelsQuery } from "@/features/channels/hooks";
-import { usePresenceQuery } from "@/features/presence/hooks";
 import type { AgentPersona, Channel, ManagedAgent } from "@/shared/api/types";
 import { removeChannelMember } from "@/shared/api/tauri";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -33,6 +32,10 @@ import {
   buildInstanceInputForDefinition,
   resolveStartRuntimeForDefinition,
 } from "../lib/instanceInputForDefinition";
+import {
+  agentPresenceStartBlockReason,
+  useAgentAvailabilityLookup,
+} from "../lib/useAgentAvailability";
 
 export function useManagedAgentActions() {
   const { globalConfig } = useGlobalAgentConfig();
@@ -99,7 +102,16 @@ export function useManagedAgentActions() {
     [managedAgents],
   );
 
-  const managedPresenceQuery = usePresenceQuery(managedPubkeyList);
+  const { query: managedPresenceQuery, getAvailability } =
+    useAgentAvailabilityLookup(managedPubkeyList);
+
+  function assertStartNotBlockedByPresence(agent: ManagedAgent) {
+    const reason = agentPresenceStartBlockReason(
+      isManagedAgentActive(agent),
+      getAvailability(agent.pubkey),
+    );
+    if (reason) throw new Error(reason);
+  }
 
   const channelsByPubkey = React.useMemo(() => {
     const map: Record<string, { id: string; name: string }[]> = {};
@@ -162,6 +174,7 @@ export function useManagedAgentActions() {
     try {
       const agent = managedAgents.find((c) => c.pubkey === pubkey);
       if (!agent) return;
+      assertStartNotBlockedByPresence(agent);
       await startManagedAgentWithRules({
         agent,
         startManagedAgent: startMutation.mutateAsync,
@@ -182,6 +195,7 @@ export function useManagedAgentActions() {
         (candidate) => candidate.pubkey === pubkey,
       );
       if (!agent) return;
+      assertStartNotBlockedByPresence(agent);
       await respawnManagedAgentWithRules({
         agent,
         startManagedAgent: startMutation.mutateAsync,
@@ -324,7 +338,7 @@ export function useManagedAgentActions() {
         agent,
         channels,
         deleteManagedAgent: deleteMutation.mutateAsync,
-        presenceLookup: managedPresenceQuery.data,
+        getAvailability,
         relayAgents: relayAgentsQuery.data ?? [],
       });
       if (result.cancelled) return;
@@ -439,6 +453,7 @@ export function useManagedAgentActions() {
     managedAgentsQuery,
     managedAgentLogQuery,
     managedPresenceQuery,
+    getAvailability,
     managedAgents,
     managedPubkeys,
     channelIdToName,

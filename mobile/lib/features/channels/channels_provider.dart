@@ -18,6 +18,8 @@ import 'unread_badge/is_high_priority_event.dart';
 import 'unread_badge/observed_unread_event.dart';
 import 'unread_badge/should_notify_for_event.dart';
 
+part 'channels_provider_lifecycle.dart';
+
 const _channelTypeOrder = {'stream': 0, 'forum': 1, 'dm': 2};
 const _unreadCatchUpLimit = 1000;
 const _participatedRootIdsPrefix = 'buzz-thread-participation.v1';
@@ -30,16 +32,18 @@ const _authoredRootIdsPrefix = 'buzz-thread-authored.v1';
 ///      the channel ids I'm a member of.
 ///   2. Fetch the corresponding kind:39000 channel metadata events.
 ///
-/// Live updates are layered on top via per-channel subscriptions on the
-/// `#h` tag for any of the visible channel event kinds — incoming events
-/// bump `lastMessageAt` for that channel.
+/// Live updates are layered on top via chunked `#h` subscriptions for visible
+/// channel event kinds. Incoming events bump `lastMessageAt` for that channel.
 class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   static const _backstopInterval = Duration(seconds: 60);
+  static const _maxLiveChannelsPerSubscription = 128;
 
-  final Map<String, void Function()> _unsubscribersByChannel = {};
+  final Map<String, _LiveChunkSubscription> _liveSubscriptionsByChunk = {};
   Future<void> _liveSubscriptionQueue = Future.value();
   List<Channel> _desiredLiveChannels = const [];
   Set<String> _desiredLiveChannelIds = const {};
+  final Set<String> _terminallyClosedLiveChunks = {};
+  int _nextLiveChunkGeneration = 0;
   int _subscriptionVersion = 0;
   String? _subscriptionRelayBaseUrl;
   Timer? _backstopTimer;
@@ -53,6 +57,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   String? _memberSnapshotRelayBaseUrl;
   String? _memberSnapshotPubkey;
   Map<String, List<ChannelMember>> _memberSnapshotsByChannelId = const {};
+
+  Ref get _lifecycleRef => ref;
 
   /// The member snapshot already returned while loading the channel list.
   ///
@@ -92,6 +98,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
           !connected.isCompleted) {
         connected.complete();
       } else if (previous?.status != SessionStatus.connected) {
+        _terminallyClosedLiveChunks.clear();
         unawaited(_backstopRefresh());
       }
     });
@@ -171,7 +178,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         .toList();
     _cacheMemberSnapshots(memberships, replaceAll: true);
     if (channelIds.isEmpty) {
-      if (subscribeLive) await _subscribeLive(const []);
+      if (subscribeLive) unawaited(_subscribeLive(const []));
       return const [];
     }
 
@@ -352,7 +359,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     }
 
     if (subscribeLive) {
-      await _subscribeLive(channels);
+      // The finite channel snapshot is usable before live setup completes.
+      unawaited(_subscribeLive(channels));
     }
     return channels;
   }
@@ -523,127 +531,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       isMember: isMember,
       ttlSeconds: data.ttlSeconds,
       ttlDeadline: data.ttlDeadline,
-    );
-  }
-
-  /// Subscribe per-channel to live events (requires `#h` tag for relay
-  /// channel-scoped fan-out). Also starts a 60s WS backstop poll to detect
-  /// newly created channels we don't yet have subscriptions for.
-  Future<void> _subscribeLive(List<Channel> channels) {
-    final channelIds = {
-      for (final channel in channels)
-        if (channel.isMember && !channel.isArchived) channel.id,
-    };
-    final relayBaseUrl = ref.read(relayConfigProvider).baseUrl;
-    _desiredLiveChannels = channels;
-    _desiredLiveChannelIds = channelIds;
-    final subscriptionVersion = ++_subscriptionVersion;
-
-    final sync = _liveSubscriptionQueue.then(
-      (_) =>
-          _syncLiveSubscriptions(relayBaseUrl, subscriptionVersion, channels),
-    );
-    _liveSubscriptionQueue = sync.catchError((Object error, StackTrace stack) {
-      debugPrint(
-        '[ChannelsNotifier] live subscription sync failed: $error\n$stack',
-      );
-    });
-    return sync;
-  }
-
-  Future<void> _syncLiveSubscriptions(
-    String relayBaseUrl,
-    int subscriptionVersion,
-    List<Channel> channels,
-  ) async {
-    if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
-      return;
-    }
-
-    if (subscriptionVersion != _subscriptionVersion) {
-      await _syncLiveSubscriptions(
-        ref.read(relayConfigProvider).baseUrl,
-        _subscriptionVersion,
-        _desiredLiveChannels,
-      );
-      return;
-    }
-
-    if (_subscriptionRelayBaseUrl != relayBaseUrl) {
-      for (final unsubscribe in _unsubscribersByChannel.values) {
-        unsubscribe();
-      }
-      _unsubscribersByChannel.clear();
-      _subscriptionRelayBaseUrl = relayBaseUrl;
-    }
-    if (ref.read(relayConfigProvider).baseUrl != relayBaseUrl) {
-      return;
-    }
-    final session = ref.read(relaySessionProvider.notifier);
-    final channelIds = _desiredLiveChannelIds;
-
-    for (final entry in _unsubscribersByChannel.entries.toList()) {
-      if (channelIds.contains(entry.key)) continue;
-      _unsubscribersByChannel.remove(entry.key);
-      entry.value();
-    }
-
-    for (final channelId in channelIds) {
-      if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
-        return;
-      }
-      if (_unsubscribersByChannel.containsKey(channelId)) continue;
-      try {
-        final unsubscribe = await session.subscribe(
-          NostrFilter(
-            kinds: EventKind.channelEventKinds,
-            tags: {
-              '#h': [channelId],
-            },
-            limit: 0,
-          ),
-          _handleLiveEvent,
-        );
-        if (ref.read(relaySessionProvider).status != SessionStatus.connected ||
-            !_desiredLiveChannelIds.contains(channelId) ||
-            ref.read(relayConfigProvider).baseUrl != relayBaseUrl ||
-            _subscriptionRelayBaseUrl != relayBaseUrl) {
-          unsubscribe();
-          return;
-        }
-        final replaced = _unsubscribersByChannel[channelId];
-        if (replaced != null) {
-          unsubscribe();
-          continue;
-        }
-        _unsubscribersByChannel[channelId] = unsubscribe;
-      } catch (error) {
-        debugPrint(
-          '[ChannelsNotifier] live subscription failed for $channelId: $error',
-        );
-      }
-    }
-
-    if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
-      return;
-    }
-
-    if (subscriptionVersion != _subscriptionVersion) {
-      final desiredChannelIds = _desiredLiveChannelIds;
-      for (final entry in _unsubscribersByChannel.entries.toList()) {
-        if (desiredChannelIds.contains(entry.key)) continue;
-        _unsubscribersByChannel.remove(entry.key);
-        entry.value();
-      }
-      return;
-    }
-
-    unawaited(_catchUpUnreadEvents(channels));
-
-    _backstopTimer?.cancel();
-    _backstopTimer = Timer.periodic(
-      _backstopInterval,
-      (_) => _backstopRefresh(),
     );
   }
 
@@ -894,18 +781,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     state = await AsyncValue.guard(() => _fetch(subscribeLive: true));
   }
 
-  void _clearLiveSubscriptions() {
-    _subscriptionVersion++;
-    _desiredLiveChannels = const [];
-    _desiredLiveChannelIds = const {};
-    for (final unsubscribe in _unsubscribersByChannel.values) {
-      unsubscribe();
-    }
-    _unsubscribersByChannel.clear();
-    _subscriptionRelayBaseUrl = null;
-    _backstopTimer?.cancel();
-    _backstopTimer = null;
-  }
 }
 
 final channelsProvider = AsyncNotifierProvider<ChannelsNotifier, List<Channel>>(

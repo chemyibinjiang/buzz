@@ -88,7 +88,9 @@ export const ChannelPane = React.memo(function ChannelPane({
   isJoining = false,
   isSinglePanelView = false,
   isSending,
+  isTimelineError = false,
   isTimelineLoading,
+  onRetryTimeline,
   entranceMessageId = null,
   onEntranceMessageComplete,
   welcomeKickoffStage = null,
@@ -594,7 +596,9 @@ export const ChannelPane = React.memo(function ChannelPane({
                   : "No messages yet"
                 : "No channel selected"
             }
+            isError={isTimelineError}
             isLoading={isHuddleTranscript ? false : isTimelineLoading}
+            onRetry={onRetryTimeline}
             entranceMessageId={entranceMessageId}
             onEntranceMessageComplete={onEntranceMessageComplete}
             mainEntries={mainTimelineEntries}

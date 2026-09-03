@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { selectTimelineLoadingState } from "./timelineLoadingState.ts";
+import {
+  resolveTimelineLoadingLatch,
+  resolveTimelineQueryLoadingState,
+  selectTimelineLoadingState,
+} from "./timelineLoadingState.ts";
 
 const settled = {
   isPending: false,
@@ -120,8 +124,6 @@ test("settled channel with rows mid-refetch is not loading", () => {
   );
 });
 
-import { resolveTimelineLoadingLatch } from "./timelineLoadingState.ts";
-
 test("latch: loading on first entry to a channel", () => {
   const r = resolveTimelineLoadingLatch(null, "chan-a", true);
   assert.equal(r.isLoading, true);
@@ -156,5 +158,32 @@ test("latch: no active channel passes loadingNow through untouched", () => {
   assert.equal(
     resolveTimelineLoadingLatch("chan-a", null, false).isLoading,
     false,
+  );
+});
+
+test("latch: a terminal cold error does not settle as empty", () => {
+  assert.deepEqual(resolveTimelineLoadingLatch(null, "chan-a", false, false), {
+    settledChannelId: null,
+    isLoading: false,
+  });
+});
+
+test("query coordinator exposes a cold error and loads again on retry", () => {
+  assert.deepEqual(
+    resolveTimelineQueryLoadingState(null, "chan-a", {
+      ...settled,
+      isEnabled: true,
+      isError: true,
+    }),
+    { settledChannelId: null, isLoading: false },
+  );
+  assert.deepEqual(
+    resolveTimelineQueryLoadingState(null, "chan-a", {
+      ...settled,
+      isEnabled: true,
+      isError: false,
+      isPending: true,
+    }),
+    { settledChannelId: null, isLoading: true },
   );
 });

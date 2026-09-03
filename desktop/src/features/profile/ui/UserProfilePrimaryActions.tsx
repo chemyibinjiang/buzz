@@ -25,6 +25,7 @@ import { Spinner } from "@/shared/ui/spinner";
 export function ProfilePrimaryActions({
   actionGroupRef,
   agentActionDisabled,
+  agentStartBlockReason,
   agentActionLabel,
   agentActionLive,
   className,
@@ -44,6 +45,7 @@ export function ProfilePrimaryActions({
 }: {
   actionGroupRef?: Ref<HTMLDivElement>;
   agentActionDisabled?: boolean;
+  agentStartBlockReason?: string;
   agentActionLabel?: string;
   agentActionLive?: boolean;
   className?: string;
@@ -94,11 +96,12 @@ export function ProfilePrimaryActions({
       {onAgentPrimaryAction && agentActionLabel ? (
         <ProfileActionTile
           active
-          disabled={agentActionDisabled}
+          disabled={agentActionDisabled || Boolean(agentStartBlockReason)}
           icon={agentActionLive ? Square : Play}
           label={agentActionLabel}
           onClick={onAgentPrimaryAction}
           testId="user-profile-agent-primary-action"
+          title={agentStartBlockReason}
         />
       ) : null}
       {onAgentRestart ? (
@@ -216,6 +219,7 @@ function ProfileActionTile({
   label,
   onClick,
   testId,
+  title,
 }: {
   active?: boolean;
   disabled?: boolean;
@@ -224,6 +228,7 @@ function ProfileActionTile({
   label: string;
   onClick: () => void;
   testId?: string;
+  title?: string;
 }) {
   return (
     <button
@@ -236,6 +241,7 @@ function ProfileActionTile({
       data-testid={testId}
       disabled={disabled}
       onClick={onClick}
+      title={title}
       type="button"
     >
       {isLoading ? (

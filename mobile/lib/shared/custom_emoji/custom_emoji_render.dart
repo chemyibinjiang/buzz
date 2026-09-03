@@ -57,8 +57,33 @@ class CustomEmojiMd extends InlineMd {
   final double size;
   late final RegExp _exp = _buildPattern(_urlByShortcode.keys);
 
-  CustomEmojiMd(List<CustomEmoji> palette, {this.size = kCustomEmojiInlineSize})
-    : _urlByShortcode = {for (final e in palette) e.shortcode: e.url};
+  /// Limit the combined Markdown regex to shortcodes referenced by [content].
+  CustomEmojiMd(
+    List<CustomEmoji> palette, {
+    required String content,
+    this.size = kCustomEmojiInlineSize,
+  }) : _urlByShortcode = _referencedUrls(palette, content);
+
+  // Look ahead so adjacent tokens sharing a colon are both considered.
+  static final _shortcodeScan = RegExp(
+    r'(?=:([a-z0-9_-]+):)',
+    caseSensitive: false,
+  );
+
+  static Map<String, String> _referencedUrls(
+    List<CustomEmoji> palette,
+    String content,
+  ) {
+    final referenced = {
+      for (final match in _shortcodeScan.allMatches(content))
+        match.group(1)!.toLowerCase(),
+    };
+    if (referenced.isEmpty) return const {};
+    return {
+      for (final emoji in palette)
+        if (referenced.contains(emoji.shortcode)) emoji.shortcode: emoji.url,
+    };
+  }
 
   @override
   RegExp get exp => _exp;

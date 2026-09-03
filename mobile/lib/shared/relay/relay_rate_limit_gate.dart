@@ -7,7 +7,7 @@ typedef RelayTimerFactory =
 
 /// Session-owned gate that pauses relay requests after back-pressure.
 class RelayRateLimitGate {
-  /// Default gate duration when the relay omits a positive retry hint.
+  /// Default gate duration when the relay omits a parseable retry hint.
   static const defaultRetrySeconds = 10;
 
   /// Longest retry hint accepted from a relay response.
@@ -33,9 +33,11 @@ class RelayRateLimitGate {
 
   /// Activates or extends the gate without shrinking an existing window.
   void activate(int? retryInSeconds) {
-    final seconds = retryInSeconds != null && retryInSeconds > 0
-        ? min(retryInSeconds, maxRetrySeconds)
-        : defaultRetrySeconds;
+    // An explicit zero means retry immediately; null means no usable hint.
+    if (retryInSeconds != null && retryInSeconds <= 0) return;
+    final seconds = retryInSeconds == null
+        ? defaultRetrySeconds
+        : min(retryInSeconds, maxRetrySeconds);
     final duration = Duration(seconds: seconds);
     final newExpiry = _now().add(duration);
     final currentExpiry = _expiresAt;

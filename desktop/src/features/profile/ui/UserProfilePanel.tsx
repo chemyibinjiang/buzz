@@ -23,6 +23,7 @@ import {
   useUpdatePersonaMutation,
 } from "@/features/agents/hooks";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
+import { useAgentAvailabilityLookup } from "@/features/agents/lib/useAgentAvailability";
 import { AddAgentToChannelDialog } from "@/features/agents/ui/AddAgentToChannelDialog";
 import {
   availableRuntimesForStart,
@@ -38,7 +39,6 @@ import {
 } from "@/features/agents/ui/personaDialogState";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useIdentityArchive } from "@/features/identity-archive/hooks";
-import { usePresenceQuery } from "@/features/presence/hooks";
 import {
   useContactListQuery,
   useFollowMutation,
@@ -254,9 +254,10 @@ export function UserProfilePanel({
     effectivePubkey ? [effectivePubkey] : [],
   );
   const channelsQuery = useChannelsQuery();
-  const presenceQuery = usePresenceQuery(
+  const { getAvailability } = useAgentAvailabilityLookup(
     effectivePubkey ? [effectivePubkey] : [],
   );
+  const presenceStatus = getAvailability(effectivePubkey);
   const userStatusQuery = useUserStatusQuery(
     effectivePubkey ? [effectivePubkey] : [],
   );
@@ -272,9 +273,6 @@ export function UserProfilePanel({
   });
   const ownerPubkey = profile?.ownerPubkey ?? null;
   const ownerProfileQuery = useUserProfileQuery(ownerPubkey ?? undefined);
-  const presenceStatus = pubkeyLower
-    ? presenceQuery.data?.[pubkeyLower]
-    : undefined;
   const userStatus = pubkeyLower
     ? userStatusQuery.data?.[pubkeyLower]
     : undefined;
@@ -413,9 +411,9 @@ export function UserProfilePanel({
     useProfileAgentDeletion({
       channels: channelsQuery.data,
       deleteManagedAgent: deleteAgentMutation.mutateAsync,
+      getAvailability,
       managedAgent,
       managedAgents: managedAgentsQuery.data,
-      presenceLookup: presenceQuery.data,
       relayAgents: relayAgentsQuery.data,
     });
 
@@ -453,6 +451,7 @@ export function UserProfilePanel({
 
   const { handleAgentPrimaryAction, handleAgentRestart } =
     useAgentLifecycleActions({
+      availability: presenceStatus,
       channels: channelsQuery.data,
       managedAgent,
       relayAgents: relayAgentsQuery.data,
@@ -749,7 +748,7 @@ export function UserProfilePanel({
       ownerProfilePubkey,
       ownerPubkey,
       persona: resolvedPersona,
-      presenceLoaded: presenceQuery.isSuccess,
+      presenceLoaded: presenceStatus !== undefined,
       presenceStatus,
       profile,
       pubkey: effectivePubkey,

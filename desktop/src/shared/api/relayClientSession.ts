@@ -970,6 +970,7 @@ export class RelayClient {
             ["REQ", subId, filter],
             "Failed to restore relay subscription after CLOSED.",
           ),
+        closeSubscription: (subId) => this.closeSubscription(subId),
       });
       return;
     }
