@@ -325,3 +325,18 @@
 - 处理：初始尾部改为从最新消息向前累计估算高度，达到一屏即停止，同时保留 24 条硬上限；后续动态 retention 与三屏快速滚动缓冲策略保持不变。
 - 验证：同一 4 倍 CPU、8 次 warm switch 基准中，普通频道中位耗时进一步由 `1211.9 ms` 降至 `853.0 ms`，重 Markdown 频道由 `1989.9 ms` 降至 `551.7 ms`；相比最初分别下降约 71% 和 86%。冷切换最长单次 long task 中位数为 `279 ms`。首屏定位、快速滚动覆盖、频道切换和 live tail 目标用例 6/6 通过，retention 单元测试 1/1 通过。
 - 版本/提交：基于 `b80ab8cc6`；待提交。
+## 2026-09-02：Buzz 退出后遗留 Codex shared app-server
+
+- 现象：Buzz 启动的 `codex.exe app-server --listen ws://127.0.0.1:51919` 在 Buzz 父进程退出后继续运行，锁住 Codex Desktop 管理的运行时目录；后续 Codex 更新因 `EPERM` 无法刷新二进制，并误报 `Unable to locate the Codex CLI binary`。
+- 定位：`spawn_codex_shared_runtime` 启动子进程并记录 PID 后立即丢弃 `Child`，该进程既不在 managed-agent 进程表中，也未绑定 Windows kill-on-close Job Object，应用退出路径因此无法回收它。现场确认遗留 PID `35120` 的父进程已经退出，执行路径位于 ChatGPT 管理的 Codex runtime，监听端口为 `51919`。
+- 处理：Buzz 现在只登记自己实际启动的 shared app-server，保留其 `Child`；Windows 下立即绑定 kill-on-close Job Object，正常退出/重启时在 managed agents 停止后显式回收整棵进程树，异常退出时由 Job Object 回收。连接到启动前已存在的外部 shared server 时不登记所有权，也不会在 Buzz 退出时终止它。启动探测失败时立即回收本次启动的进程。
+- 验证：新增 Windows Job Object 回归测试，确认关闭所有权句柄后子进程在 2 秒内退出；该测试 1/1、既有 Codex shared-runtime 测试 9/9 通过，三个修改的 Rust 文件 `rustfmt --check` 和 `git diff --check` 通过。Tauri lib 全量测试 2,357 通过、9 失败、11 ignored；9 个失败来自 Windows 环境缺少 Unix `true` 命令及既有 provider fixture/egress inventory 漂移，均不涉及本次生命周期文件。
+- 版本/提交：分支 `codex/codex-lifecycle-cleanup`，提交见本条所在提交。
+
+## 2026-09-02：修正 Codex shared runtime 所有权，并恢复 Windows Agent Stop
+
+- 现象：上一条未合并方案会在 Buzz 退出时一并终止共享 app-server，导致仍打开的 Codex Desktop 静默失去 backend；同时 Windows 上点击 Codex task Agent 的 `Disconnect Buzz` 可能无法及时释放 task。
+- 定位：shared app-server 是 Buzz 与 Codex Desktop 共用的电脑级服务，不应归 Buzz 窗口所有；真正需要避免的是它长期锁住 Codex Desktop、ChatGPT 或 Scientist 的可更新 runtime 目录。另查明 `stop_managed_agent_runtime` 使用的 `process_is_running` 在 Windows 固定返回 `false`，会跳过已跟踪 harness 的终止步骤并直接等待仍在运行的子进程。
+- 处理：推翻上一条未合并的 kill-on-quit 方案。Windows 首次启动 shared app-server 前，将 `codex.exe`、Code Mode host、command runner 和 sandbox setup 复制到 Buzz 管理的版本化不可变目录；成功启动后主动释放 `Child` 句柄，让 backend 跨 Buzz 退出继续服务，而 Codex 更新不再被锁。启动探测失败时仍只回收本次新进程。显式 Stop 改为对已跟踪 `Child` 调用 `try_wait`，仍运行时终止整棵进程树并等待退出，然后清理 receipt/session cache；Agent 身份和 Codex task 绑定保持不变。
+- 验证：Codex lifecycle Rust 测试 11/11、runtime command 测试 10/10、前端 Agent Connect/Disconnect 行为测试 8/8 通过。新增测试确认版本更新产生新缓存且旧版本保持可执行、Buzz 丢弃子进程句柄后 backend 仍存活，以及 Windows Stop 确实终止运行中的进程树。`managed_agents` 扩展测试 980 通过、5 失败；失败均为 Windows 环境无法启动 Unix `env`/`true` 或 PATH 占位命令的既有跨平台夹具，不涉及本次修改路径。
+- 版本/提交：分支 `codex/codex-lifecycle-cleanup`，待提交。
