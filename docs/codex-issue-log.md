@@ -301,3 +301,11 @@
 - 处理：直接通过绝对路径使用仓库锁定的 Flutter `3.41.7` / Dart `3.11.5`，不修改系统 `PATH`；在未读补拉的网络等待后及最终状态写入前检查 provider 是否仍挂载，释放后丢弃异步结果；修正 emoji 测试期望并应用 Dart formatter，删除静态分析发现的未使用订阅字段。
 - 验证：`flutter doctor -v` 确认 Android SDK 35、JDK 17、许可证和已连接 Android 16 平板均正常；`flutter pub get`、全项目 Dart 格式检查、`flutter analyze` 均通过；目标回归测试 24/24、完整 `flutter test` 1388/1388 通过。文件大小门禁仍只报告当前分支已有的 `compose_bar_widget.dart`、`media_upload.dart` 和 `relay_session.dart` 超限，没有新增超限文件。
 - 版本/提交：基于 `34676df49`；移动端生命周期修复待提交。
+
+## 2026-09-03：Buzz 启动后 Inbox Thread 误显上下文错误
+
+- 现象：刚打开 Buzz、未进行任何操作时，Inbox 的 Thread 详情会在已经显示部分消息的同时出现红色 `Some message context could not be loaded.` 提示。
+- 定位：启动阶段会并发读取 Thread 的祖先消息；HTTP `/query` 偶发返回 rate-limit 时，共享限流门虽然被开启，但当前 `getEventById` 调用仍立即失败。Inbox 将这类瞬时失败与永久缺失一并记为上下文错误，UI 又在已有可用消息时仍无条件显示破坏性错误条。
+- 处理：为 Inbox 的单条上下文读取增加最多 3 次的限流感知重试，等待现有共享 rate-limit gate 后再读；永久性的 `event not found` 不重试。错误条在加载期间保持隐藏，并且只有上下文加载结束且可见消息不超过 1 条时才显示；已取得至少 2 条可用上下文时保留内容、不再误报。
+- 验证：新增重试与错误条条件测试 5/5 通过，Inbox 相关目标测试 27/27 通过，Biome 与 TypeScript 类型检查通过。Desktop 全量单测 4898/4899 通过，唯一失败为无关的 `useDocumentVisible` 计时用例，单独重跑 4/4 通过。
+- 版本/提交：基于 `f223dd2fd`；待提交。

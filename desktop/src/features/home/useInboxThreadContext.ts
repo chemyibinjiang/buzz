@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { retryInboxContextRead } from "@/features/home/lib/inboxContextRetry";
 import { isInboxThreadContextEvent } from "@/features/home/lib/inboxViewHelpers";
 import { relayEventFromFeedItem } from "@/features/home/lib/inbox";
 import { fetchStructuralAuxForMessages } from "@/features/messages/lib/auxBackfill";
@@ -169,7 +170,9 @@ export function useInboxThreadContext(
             }
 
             try {
-              const event = await getEventById(eventId);
+              const event = await retryInboxContextRead(() =>
+                getEventById(eventId),
+              );
               eventsById.set(event.id, event);
               return event;
             } catch {

@@ -38,6 +38,14 @@ export function hasInboxThreadContext(
   );
 }
 
+export function shouldShowInboxContextLoadError(
+  hasLoadError: boolean,
+  isLoading: boolean,
+  visibleMessageCount: number,
+) {
+  return hasLoadError && !isLoading && visibleMessageCount <= 1;
+}
+
 export function matchesInboxFilter(
   item: {
     categories: readonly string[];

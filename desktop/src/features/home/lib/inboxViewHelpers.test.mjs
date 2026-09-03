@@ -11,6 +11,7 @@ import {
   isInboxThreadContextEvent,
   matchesInboxAllView,
   matchesInboxFilter,
+  shouldShowInboxContextLoadError,
   toInboxContextMessage,
   toTimelineMessage,
 } from "./inboxViewHelpers.ts";
@@ -63,6 +64,12 @@ test("hasInboxThreadContext keeps standalone and broadcast activity unthreaded",
     }),
     false,
   );
+});
+
+test("Inbox context error stays hidden while loading or partial context is usable", () => {
+  assert.equal(shouldShowInboxContextLoadError(true, true, 1), false);
+  assert.equal(shouldShowInboxContextLoadError(true, false, 2), false);
+  assert.equal(shouldShowInboxContextLoadError(true, false, 1), true);
 });
 
 // --- matchesInboxFilter ---

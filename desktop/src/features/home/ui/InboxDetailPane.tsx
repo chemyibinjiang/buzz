@@ -19,7 +19,10 @@ import { ProjectInboxDetail } from "@/features/home/ui/ProjectInboxDetail";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { formatInboxTypeLabel } from "@/features/home/lib/inbox";
-import { hasInboxThreadContext } from "@/features/home/lib/inboxViewHelpers";
+import {
+  hasInboxThreadContext,
+  shouldShowInboxContextLoadError,
+} from "@/features/home/lib/inboxViewHelpers";
 import {
   type InboxDisplayMessage,
   InboxMessageRow,
@@ -612,7 +615,11 @@ function InboxMessageDetailPane({
                 <span>Loading surrounding context...</span>
               </div>
             ) : null}
-            {hasThreadContextLoadError ? (
+            {shouldShowInboxContextLoadError(
+              hasThreadContextLoadError,
+              isThreadContextLoading,
+              displayMessages.length,
+            ) ? (
               <div
                 className="mx-4 mb-2 flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 data-testid="home-inbox-context-error"
