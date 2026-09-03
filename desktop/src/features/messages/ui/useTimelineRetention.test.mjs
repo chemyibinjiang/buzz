@@ -34,6 +34,7 @@ it("does not keep the full timeline mounted before the viewport is measured", as
   const dom = new JSDOM(
     "<!doctype html><html><body><div id='root'></div></body></html>",
   );
+  Object.defineProperty(dom.window, "innerHeight", { value: 1_000 });
   let initialRefresh;
   Object.assign(globalThis, {
     cancelAnimationFrame() {
@@ -49,6 +50,7 @@ it("does not keep the full timeline mounted before the viewport is measured", as
   });
 
   const keys = Array.from({ length: 10_000 }, (_, index) => `message-${index}`);
+  const items = keys.map(() => ({ kind: "bottom-spacer" }));
   const itemHeight = 100;
   const list = {
     findItemIndex(offset) {
@@ -60,15 +62,15 @@ it("does not keep the full timeline mounted before the viewport is measured", as
   };
   let retention;
   function Harness() {
-    retention = useTimelineRetention(keys, { current: list }, false);
+    retention = useTimelineRetention(keys, items, { current: list }, false);
     return null;
   }
 
   const root = createRoot(document.getElementById("root"));
   await act(async () => root.render(React.createElement(Harness)));
 
-  assert.equal(retention.retainedIndices.length, 100);
-  assert.equal(retention.retainedIndices[0], 9_900);
+  assert.equal(retention.retainedIndices.length, 11);
+  assert.equal(retention.retainedIndices[0], 9_989);
   assert.equal(retention.retainedIndices.at(-1), 9_999);
 
   await act(async () => initialRefresh());

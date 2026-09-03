@@ -721,7 +721,7 @@ function VirtualizedTimelineRows({
   }, []);
 
   const { retainedIndices, onScrollEnd: handleScrollEnd } =
-    useTimelineRetention(keys, listRef, isPrepend);
+    useTimelineRetention(keys, items, listRef, isPrepend);
 
   const handleScroll = React.useCallback(
     (offset: number) => {

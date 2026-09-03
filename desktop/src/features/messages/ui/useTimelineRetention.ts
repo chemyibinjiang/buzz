@@ -1,22 +1,49 @@
 import * as React from "react";
 import type { VListHandle } from "virtua";
+import {
+  estimateVirtualizedTimelineItemHeight,
+  type VirtualizedTimelineItem,
+} from "@/features/messages/lib/virtualizedTimelineItems";
 import { nextRetainedTimelineKeys } from "./timelineRetention";
 
-// One viewport of the smallest continuation rows is enough to establish the
-// initial bottom anchor. A larger fixed tail eagerly mounts expensive media
-// and Markdown rows that are nowhere near the visible viewport.
-const INITIAL_RETAINED_TAIL_SIZE = 24;
+const INITIAL_RETAINED_TAIL_LIMIT = 24;
+
+function initialRetainedTimelineKeys(
+  keys: readonly string[],
+  items: readonly VirtualizedTimelineItem[],
+): string[] {
+  const targetHeight =
+    typeof window === "undefined" ? 1_000 : window.innerHeight;
+  const retained: string[] = [];
+  let estimatedHeight = 0;
+
+  for (
+    let index = keys.length - 1;
+    index >= 0 && retained.length < INITIAL_RETAINED_TAIL_LIMIT;
+    index -= 1
+  ) {
+    const key = keys[index];
+    const item = items[index];
+    if (!key || !item) continue;
+    retained.push(key);
+    estimatedHeight += estimateVirtualizedTimelineItemHeight(item);
+    if (estimatedHeight >= targetHeight) break;
+  }
+
+  return retained;
+}
 
 export function useTimelineRetention(
   keys: readonly string[],
+  items: readonly VirtualizedTimelineItem[],
   listRef: React.RefObject<VListHandle | null>,
   isPrepend: boolean,
 ) {
-  // Retain only a bounded visual tail on the first render. The timeline opens
-  // at newest, so this gives Virtua stable rows for initial bottom positioning
-  // without turning `keepMounted` into an all-history mount.
+  // Retain one estimated viewport on the first render. Counting pixels rather
+  // than rows keeps rich media and Markdown channels from eagerly mounting a
+  // fixed tail that can be many screens tall.
   const [retainedKeys, setRetainedKeys] = React.useState<ReadonlySet<string>>(
-    () => new Set(keys.slice(-INITIAL_RETAINED_TAIL_SIZE)),
+    () => new Set(initialRetainedTimelineKeys(keys, items)),
   );
   const evictionNotBeforeRef = React.useRef(0);
   const refreshTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
