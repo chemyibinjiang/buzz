@@ -165,6 +165,10 @@ test("image bundle lightbox navigates as a gallery", async ({ page }) => {
     "cover",
   );
   await expectCornerRadiusPx(triggers.first().locator("img"), 0);
+  await triggers
+    .first()
+    .locator("img")
+    .evaluate((image) => image.setAttribute("data-e2e-stable-image", ""));
   await triggers.first().click();
 
   const dialog = page.getByRole("dialog");
@@ -254,6 +258,25 @@ test("image bundle lightbox navigates as a gallery", async ({ page }) => {
   expect(
     Math.abs(closingFrameStyle.height - currentThumbnailBox.height),
   ).toBeLessThan(2);
+  await page.waitForFunction(() => {
+    const overlay = document.querySelector<HTMLElement>(
+      '[data-image-lightbox-phase="fading"]',
+    );
+    const source = document.querySelector<HTMLElement>(
+      '[data-e2e-stable-image=""]',
+    );
+    const sourceButton = source?.closest("button") ?? null;
+    return (
+      overlay !== null &&
+      source !== null &&
+      sourceButton !== null &&
+      window.getComputedStyle(sourceButton).opacity === "1"
+    );
+  });
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    triggers.first().locator("[data-e2e-stable-image]"),
+  ).toBeVisible();
 });
 
 test("hidden spoiler images are excluded from gallery navigation until revealed", async ({

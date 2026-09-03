@@ -34,7 +34,43 @@ type ProgressiveImageProps = {
   width: number;
 };
 
-export function ProgressiveImage({
+function useDecodedImageSource(nextSource: string | undefined) {
+  const [displayedSource, setDisplayedSource] = React.useState(nextSource);
+
+  React.useEffect(() => {
+    if (nextSource === displayedSource) return;
+    if (!nextSource) {
+      setDisplayedSource(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    const image = new Image();
+    const commit = async () => {
+      try {
+        await image.decode();
+      } catch {
+        // A completed load is still safe to display when decode is unsupported.
+      }
+      if (!cancelled) setDisplayedSource(nextSource);
+    };
+    image.onload = () => void commit();
+    image.onerror = () => {
+      if (!cancelled) setDisplayedSource(nextSource);
+    };
+    image.src = nextSource;
+
+    return () => {
+      cancelled = true;
+      image.onload = null;
+      image.onerror = null;
+    };
+  }, [displayedSource, nextSource]);
+
+  return displayedSource;
+}
+
+export const ProgressiveImage = React.memo(function ProgressiveImage({
   alt,
   fullImageRef,
   height,
@@ -47,9 +83,14 @@ export function ProgressiveImage({
   thumbSrc,
   width,
 }: ProgressiveImageProps) {
-  const thumbnailSrc = isSameImageSource(thumbSrc, resolvedSrc)
+  const displayedResolvedSrc = useDecodedImageSource(resolvedSrc);
+  const displayedThumbSrc = useDecodedImageSource(thumbSrc);
+  const thumbnailSrc = isSameImageSource(
+    displayedThumbSrc,
+    displayedResolvedSrc,
+  )
     ? undefined
-    : thumbSrc;
+    : displayedThumbSrc;
   const [loadFullImage, setLoadFullImage] = React.useState(!thumbnailSrc);
   const [fullImageLoaded, setFullImageLoaded] = React.useState(!thumbnailSrc);
 
@@ -130,7 +171,7 @@ export function ProgressiveImage({
           height={height}
           loading={thumbnailSrc ? undefined : "lazy"}
           ref={setFullImageRef}
-          src={resolvedSrc}
+          src={displayedResolvedSrc}
           style={style}
           width={width}
           onLoad={(event) => void handleFullLoad(event.currentTarget)}
@@ -138,4 +179,6 @@ export function ProgressiveImage({
       ) : null}
     </span>
   );
-}
+});
+
+ProgressiveImage.displayName = "ProgressiveImage";

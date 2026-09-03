@@ -2,7 +2,10 @@ import * as React from "react";
 import type { VListHandle } from "virtua";
 import { nextRetainedTimelineKeys } from "./timelineRetention";
 
-const INITIAL_RETAINED_TAIL_SIZE = 100;
+// One viewport of the smallest continuation rows is enough to establish the
+// initial bottom anchor. A larger fixed tail eagerly mounts expensive media
+// and Markdown rows that are nowhere near the visible viewport.
+const INITIAL_RETAINED_TAIL_SIZE = 24;
 
 export function useTimelineRetention(
   keys: readonly string[],

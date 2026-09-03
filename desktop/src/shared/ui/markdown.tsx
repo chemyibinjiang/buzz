@@ -177,6 +177,7 @@ function ImageZoomOverlay({
   onCopy,
   onDownload,
   onClose,
+  onReturnReady,
   resolvedSrc,
   sourceBox,
   sourceCornerRadii,
@@ -189,6 +190,7 @@ function ImageZoomOverlay({
   onCopy: (src: string | undefined) => void;
   onDownload: (src: string | undefined) => void;
   onClose: () => void;
+  onReturnReady?: () => void;
   resolvedSrc: string;
   sourceBox: ImageLightboxBox;
   sourceCornerRadii: ImageLightboxCornerRadii;
@@ -325,6 +327,7 @@ function ImageZoomOverlay({
     setReturnCornerRadii(returnTarget.cornerRadii);
 
     if (prefersReducedMotion) {
+      onReturnReady?.();
       setPhase("fading");
       closeTimerRef.current = window.setTimeout(() => {
         onClose();
@@ -334,6 +337,7 @@ function ImageZoomOverlay({
 
     setPhase("closing");
     fadeTimerRef.current = window.setTimeout(() => {
+      onReturnReady?.();
       setPhase("fading");
     }, IMAGE_LIGHTBOX_EXIT_MS);
     closeTimerRef.current = window.setTimeout(() => {
@@ -342,6 +346,7 @@ function ImageZoomOverlay({
   }, [
     currentItem,
     onClose,
+    onReturnReady,
     prefersReducedMotion,
     sourceBox,
     sourceCornerRadii,
@@ -730,6 +735,7 @@ function ImageZoomOverlay({
       aria-label={label}
       aria-modal="true"
       className="dark video-review-theme fixed inset-0 z-50 cursor-zoom-out outline-hidden"
+      data-image-lightbox-phase={phase}
       onClick={(event) => {
         if (Date.now() < suppressCloseUntilRef.current) {
           return;
@@ -1012,6 +1018,7 @@ function ImageBlock({ alt, dim, resolvedSrc, src, thumbSrc }: ImageBlockProps) {
     sourceCornerRadii: ImageLightboxCornerRadii;
     sourceScope: Element | null;
   } | null>(null);
+  const [isInlineImageHidden, setIsInlineImageHidden] = React.useState(false);
   const [isHiddenInSpoiler, setIsHiddenInSpoiler] = React.useState(false);
   const [menu, setMenu] = React.useState<MediaContextMenuPosition | null>(null);
   const inlineImageRef = React.useRef<HTMLImageElement | null>(null);
@@ -1070,11 +1077,15 @@ function ImageBlock({ alt, dim, resolvedSrc, src, thumbSrc }: ImageBlockProps) {
     ? currentSpoilerMediaSize
     : null;
 
-  const spoilerMediaStyle = imageReserveStyle({
-    hiddenSpoilerMediaSize,
-    intrinsicDimensions,
-    useFixedReserveBox,
-  });
+  const spoilerMediaStyle = React.useMemo(
+    () =>
+      imageReserveStyle({
+        hiddenSpoilerMediaSize,
+        intrinsicDimensions,
+        useFixedReserveBox,
+      }),
+    [hiddenSpoilerMediaSize, intrinsicDimensions, useFixedReserveBox],
+  );
 
   React.useLayoutEffect(() => {
     const trigger = triggerRef.current;
@@ -1140,6 +1151,7 @@ function ImageBlock({ alt, dim, resolvedSrc, src, thumbSrc }: ImageBlockProps) {
             sourceScope,
           )
         : { galleryIndex: 0, galleryItems: undefined };
+      setIsInlineImageHidden(true);
       setLightboxState({
         galleryIndex: gallery.galleryIndex,
         galleryItems: gallery.galleryItems,
@@ -1156,6 +1168,15 @@ function ImageBlock({ alt, dim, resolvedSrc, src, thumbSrc }: ImageBlockProps) {
       openLightbox(inlineImageRef.current);
     }
   };
+
+  const handleLightboxClose = React.useCallback(() => {
+    setIsInlineImageHidden(false);
+    setLightboxState(null);
+  }, []);
+  const handleLightboxReturnReady = React.useCallback(
+    () => setIsInlineImageHidden(false),
+    [],
+  );
 
   const handleCopyImage = React.useCallback((copySrc: string | undefined) => {
     setMenu(null);
@@ -1191,7 +1212,7 @@ function ImageBlock({ alt, dim, resolvedSrc, src, thumbSrc }: ImageBlockProps) {
         aria-label={alt?.trim() ? `Zoom image: ${alt}` : "Zoom image"}
         className={cn(
           "mt-1 inline-block min-w-0 max-w-full cursor-zoom-in overflow-hidden rounded-2xl border-0 bg-transparent p-0 text-left align-top focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/50",
-          lightboxState && "opacity-0",
+          isInlineImageHidden && "opacity-0",
         )}
         data-image-lightbox-resolved-src={resolvedSrc}
         data-image-lightbox-alt={alt}
@@ -1236,7 +1257,8 @@ function ImageBlock({ alt, dim, resolvedSrc, src, thumbSrc }: ImageBlockProps) {
           galleryItems={lightboxState.galleryItems}
           onCopy={handleCopyImage}
           onDownload={handleDownload}
-          onClose={() => setLightboxState(null)}
+          onClose={handleLightboxClose}
+          onReturnReady={handleLightboxReturnReady}
           resolvedSrc={resolvedSrc}
           sourceBox={lightboxState.sourceBox}
           sourceCornerRadii={lightboxState.sourceCornerRadii}

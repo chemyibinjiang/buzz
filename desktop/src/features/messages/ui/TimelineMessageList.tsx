@@ -685,19 +685,39 @@ function VirtualizedTimelineRows({
   React.useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    let bufferMultiplier = 1;
+    let expansionFrame: number | null = null;
+    let expansionIdle: number | null = null;
+    let expansionTimer: number | null = null;
     const updateBufferSize = () => {
-      // Measure rows three viewports ahead of the reader. Virtua deliberately
-      // hides each newly mounted row until its first ResizeObserver result; a
-      // one-viewport lead can be consumed by WebKit trackpad momentum before
-      // that result commits, producing a first-pass-only blank flash. The
-      // measured size is cached, which is why revisiting the same range is
-      // already stable.
-      setOffscreenBufferSize(host.clientHeight * 3);
+      setOffscreenBufferSize(host.clientHeight * bufferMultiplier);
     };
+    const scheduleExpansion = () => {
+      const expand = () => {
+        bufferMultiplier += 1;
+        React.startTransition(updateBufferSize);
+        if (bufferMultiplier < 3) scheduleExpansion();
+      };
+      if ("requestIdleCallback" in window) {
+        expansionIdle = window.requestIdleCallback(expand, { timeout: 750 });
+      } else {
+        expansionTimer = globalThis.setTimeout(expand, 100);
+      }
+    };
+
+    // Render one viewport of look-ahead for the first paint, then restore the
+    // three-viewport WebKit momentum guard over idle slices. This avoids a
+    // channel switch synchronously mounting a large offscreen Markdown tail.
     updateBufferSize();
+    expansionFrame = window.requestAnimationFrame(scheduleExpansion);
     const resizeObserver = new ResizeObserver(updateBufferSize);
     resizeObserver.observe(host);
-    return () => resizeObserver.disconnect();
+    return () => {
+      resizeObserver.disconnect();
+      if (expansionFrame !== null) window.cancelAnimationFrame(expansionFrame);
+      if (expansionIdle !== null) window.cancelIdleCallback(expansionIdle);
+      if (expansionTimer !== null) window.clearTimeout(expansionTimer);
+    };
   }, []);
 
   const { retainedIndices, onScrollEnd: handleScrollEnd } =
