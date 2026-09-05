@@ -221,3 +221,11 @@
 - 处理：Windows 进程分类同时识别已验证 Desktop 进程树中的 `codex.exe app-server` 后代，并保留旧 Appx backend 路径匹配；监听 shared URL 的 backend 继续排除，独立 CLI app-server 也不会因路径相似被误判。这样 Start/Restart 会在创建 Agent worker 前触发现有接管确认。
 - 验证：Tauri `codex_desktop` 定向测试 11/11 通过，覆盖 LocalAppData Desktop 子进程、旧 Appx backend、shared listener 与无关 CLI backend。随后构建并在 Xiaoxin 安装 `0.5.18-local.1`：新版准确显示 1 个私有 app-server，Connect 前弹出 `Close and reconnect`，且确认前没有启动 `buzz-acp`；确认后旧私有 PID 消失，Codex Desktop 重开并复用原 shared PID `2596`。临时 Agent 经 DM 返回精确文本 `BUZZ_LOCK_LIVE_OK`，日志记录 5 秒后 lazy worker 回收且没有 writer conflict；Disconnect 后 harness 退出，Desktop 与 shared runtime 保持运行。
 - 版本/提交：PR 分支 `codex/detect-versioned-codex-desktop`；Xiaoxin 验收安装包基于原始测试提交 `9760ec38`，版本 `0.5.18-local.1_9760ec382776`。
+
+## 2026-09-06：同步上游安全、身份恢复与慢 Relay 韧性修复
+
+- 现象：定制分支落后于上游三项重要修复：ACP 会在验证 Nostr 事件签名之前更新路由和回放状态；损坏或暂时不可解析的 keyring 身份可能在恢复前被删除；慢 Relay 下 profile、通知目标回复和限流关闭的历史订阅可能过早失败。
+- 定位：分别对应上游 #7010、#7203 和 #7188。跨频道 busy-owner 调度修复 #7337 经评估后按当前产品优先级暂不移植。
+- 处理：ACP 在任何路由、水位线、成员关系或控制队列处理前验证事件 ID 与 Schnorr 签名；Desktop 身份恢复先探测有效 `identity.key`，存在迁移标记时保留不可解析的 keyring 材料并进入 `Lost`；Desktop 为 profile 批量读取、目标 thread reply 和限流关闭的历史订阅加入有界重试与恢复。合并时保留定制分支的 thread 编辑、删除和 reaction aux 补拉，并为纯 Node 测试隔离 Tauri/Relay 依赖。
+- 验证：`app_state::` 50/50、thread reply 10/10、profile/relay recovery 20/20 测试通过，Desktop TypeScript typecheck 通过；新增 ACP 签名验证用例通过。全量 ACP 测试受既有 Windows/WSL shell 夹具影响出现无关失败并生成错误路径的临时捕获文件，已清理并改用聚焦验证。
+- 版本/提交：分支 `codex/upstream-security-relay-resilience`，基于 `origin/Lin/develop` 的 `99b85750`；提交见本条所在分支。
