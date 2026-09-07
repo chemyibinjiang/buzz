@@ -1,4 +1,4 @@
-use super::backfill_standalone_agents_in_dir;
+use super::{backfill_standalone_agents_in_dir, prune_orphaned_backfilled_definitions_in_dir};
 use crate::managed_agents::spawn_snapshot::prospective_spawn_config_snapshot;
 use crate::managed_agents::{AgentDefinition, ManagedAgentRecord};
 use crate::migration::test_support::{read_agents_json, write_agents_json};
@@ -268,6 +268,52 @@ fn definitions_and_linked_records_are_untouched() {
     );
     let records = read_agents_json(dir.path());
     assert_eq!(records.len(), 1, "nothing manufactured");
+}
+
+#[test]
+fn orphaned_inactive_backfilled_definition_is_pruned() {
+    let dir = tempfile::tempdir().unwrap();
+    let pubkey = "a".repeat(64);
+    let mut definition = standalone_agent_json("Deleted task", "", None);
+    definition["slug"] = serde_json::json!(pubkey);
+    definition["pubkey"] = serde_json::json!("");
+    definition["is_active"] = serde_json::json!(false);
+    write_agents_json(dir.path(), &serde_json::json!([definition]));
+
+    assert_eq!(
+        prune_orphaned_backfilled_definitions_in_dir(&base(dir.path())).unwrap(),
+        1
+    );
+    assert!(read_agents_json(dir.path()).is_empty());
+    assert!(base(dir.path())
+        .join("managed-agents.json.pre-orphan-prune.bak")
+        .exists());
+}
+
+#[test]
+fn orphan_cleanup_preserves_referenced_and_user_named_definitions() {
+    let dir = tempfile::tempdir().unwrap();
+    let pubkey = "b".repeat(64);
+    let mut referenced = standalone_agent_json("Referenced", "", None);
+    referenced["slug"] = serde_json::json!(pubkey.clone());
+    referenced["pubkey"] = serde_json::json!("");
+    referenced["is_active"] = serde_json::json!(false);
+    let mut instance = standalone_agent_json("Instance", &"c".repeat(64), None);
+    instance["persona_id"] = serde_json::json!(pubkey);
+    let mut custom = standalone_agent_json("Reusable", "", None);
+    custom["slug"] = serde_json::json!("reusable-agent");
+    custom["pubkey"] = serde_json::json!("");
+    custom["is_active"] = serde_json::json!(false);
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([referenced, instance, custom]),
+    );
+
+    assert_eq!(
+        prune_orphaned_backfilled_definitions_in_dir(&base(dir.path())).unwrap(),
+        0
+    );
+    assert_eq!(read_agents_json(dir.path()).len(), 3);
 }
 
 #[test]

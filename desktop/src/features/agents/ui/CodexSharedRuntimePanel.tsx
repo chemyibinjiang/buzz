@@ -83,7 +83,7 @@ export function CodexSharedRuntimePanel({
       const next = await takeoverMutation.mutateAsync();
       setConfirmTakeover(false);
       if (isCodexSharedRuntimeUsable(next)) {
-        toast.success("Codex Desktop reconnected to the shared runtime");
+        toast.success("Codex Desktop started on the shared runtime");
       } else {
         toast.error("Codex Desktop did not reconnect cleanly", {
           description: next.desktopDetectionError ?? next.detail ?? undefined,
@@ -183,7 +183,7 @@ export function CodexSharedRuntimePanel({
               type="button"
               variant="destructive"
             >
-              Take over Codex Desktop
+              Start Codex Desktop
             </Button>
           ) : !fullyReady ? (
             <Button
@@ -211,7 +211,7 @@ export function CodexSharedRuntimePanel({
               variant="outline"
             >
               <MonitorUp />
-              {launchMutation.isPending ? "Opening..." : "Open Codex Desktop"}
+              {launchMutation.isPending ? "Starting..." : "Start Codex Desktop"}
             </Button>
           ) : null}
           <Button
@@ -250,12 +250,16 @@ export function CodexSharedRuntimePanel({
       >
         <AlertDialogContent data-testid="codex-desktop-takeover-dialog">
           <AlertDialogHeader>
-            <AlertDialogTitle>Reconnect Codex Desktop?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Start Codex Desktop on the shared runtime?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Codex Desktop has not fully exited. Closing it may stop active
-              turns and discard unsaved composer drafts. Buzz will keep the
-              shared runtime at {status?.url ?? "ws://127.0.0.1:51919"} running,
-              then reopen Desktop on that runtime.
+              Buzz will close the running Codex Desktop processes and their
+              private app-servers. Active turns and unsaved composer drafts may
+              be lost. The shared runtime at{" "}
+              {status?.url ?? "ws://127.0.0.1:51919"} will stay running, and
+              Codex Desktop will reopen on it. Independent CLI, SSH, and
+              Scientist runtimes are not affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -279,8 +283,8 @@ export function CodexSharedRuntimePanel({
                 variant="destructive"
               >
                 {takeoverMutation.isPending
-                  ? "Reconnecting..."
-                  : "Close and reconnect"}
+                  ? "Starting..."
+                  : "Close conflicts and start"}
               </Button>
             </AlertDialogAction>
           </AlertDialogFooter>

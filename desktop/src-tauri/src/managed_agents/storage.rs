@@ -959,9 +959,15 @@ pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
         }
         if let Some(detail) = line.strip_prefix("Error: failed to load identity-bound Codex task:")
         {
+            let detail = detail.trim();
+            let embedded_code = detail
+                .strip_prefix("Agent reported error (code ")
+                .and_then(|rest| rest.split_once("): "))
+                .and_then(|(code, _)| code.parse::<i64>().ok());
+            let is_timeout = detail.to_ascii_lowercase().contains("timeout");
             return Some(AgentLogError {
-                message: format!("Codex task load failed: {}", detail.trim()),
-                code: Some(-32004),
+                message: format!("Codex task load failed: {detail}"),
+                code: embedded_code.or(is_timeout.then_some(-32004)),
             });
         }
         None

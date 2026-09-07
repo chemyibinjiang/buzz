@@ -19,12 +19,18 @@ import {
 test("writer conflicts are actionable even with JSON-RPC -32600", () => {
   const active = "thread abc already has an active writer";
   const local = "thread abc already has a live local writer";
+  const privateDesktop =
+    "Codex Desktop is still running outside the shared runtime.";
 
   assert.deepEqual(friendlyAgentLastError(active, -32600), {
     severity: "generic",
     copy: CODEX_WRITER_CONFLICT_COPY,
   });
   assert.deepEqual(friendlyAgentLastError(local, -32600), {
+    severity: "generic",
+    copy: CODEX_WRITER_CONFLICT_COPY,
+  });
+  assert.deepEqual(friendlyAgentLastError(privateDesktop), {
     severity: "generic",
     copy: CODEX_WRITER_CONFLICT_COPY,
   });

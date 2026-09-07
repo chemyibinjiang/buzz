@@ -104,7 +104,7 @@ test("pickWelcomeGuideAgent ignores non-Kit agents with the legacy prompt", () =
   assert.equal(pickWelcomeGuideAgent([nonKit, fizz]), fizz);
 });
 
-test("pickWelcomeGuideAgentForRelay ignores Fizz agents from other communities", () => {
+test("pickWelcomeGuideAgentForRelay prefers running Fizz across relay changes", () => {
   const otherCommunityFizz = makeAgent({
     pubkey: PUB_A,
     personaId: WELCOME_GUIDE_PERSONA_ID,
@@ -123,11 +123,11 @@ test("pickWelcomeGuideAgentForRelay ignores Fizz agents from other communities",
       [otherCommunityFizz, currentCommunityFizz],
       RELAY_B,
     ),
-    currentCommunityFizz,
+    otherCommunityFizz,
   );
 });
 
-test("pickWelcomeGuideAgentForRelay returns null when Fizz only exists in another community", () => {
+test("pickWelcomeGuideAgentForRelay reuses Fizz from an earlier relay", () => {
   const otherCommunityFizz = makeAgent({
     pubkey: PUB_A,
     personaId: WELCOME_GUIDE_PERSONA_ID,
@@ -136,7 +136,7 @@ test("pickWelcomeGuideAgentForRelay returns null when Fizz only exists in anothe
 
   assert.equal(
     pickWelcomeGuideAgentForRelay([otherCommunityFizz], RELAY_B),
-    null,
+    otherCommunityFizz,
   );
 });
 
@@ -331,14 +331,14 @@ test("starter matching uses persona identity rather than display name", () => {
   );
 });
 
-test("starter matching is relay scoped and normalizes trailing slashes", () => {
+test("starter matching reuses an existing identity after a relay change", () => {
   const bumble = WELCOME_TEAM_STARTERS[2];
   const otherRelay = makeAgent({
     personaId: bumble.personaId,
     relayUrl: RELAY_B,
     status: "running",
   });
-  const matchingRelay = makeAgent({
+  const stoppedOnCurrentRelay = makeAgent({
     personaId: bumble.personaId,
     relayUrl: `${RELAY_A}/`,
     pubkey: PUB_B,
@@ -346,11 +346,11 @@ test("starter matching is relay scoped and normalizes trailing slashes", () => {
 
   assert.equal(
     pickWelcomeTeamStarterAgentForRelay(
-      [otherRelay, matchingRelay],
+      [otherRelay, stoppedOnCurrentRelay],
       bumble,
       RELAY_A,
     ),
-    matchingRelay,
+    otherRelay,
   );
 });
 

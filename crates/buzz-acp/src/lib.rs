@@ -1577,8 +1577,8 @@ fn any_respawn_in_flight(crash_history: &[SlotCircuit]) -> bool {
 struct RespawnResult {
     index: usize,
     /// Tuple: (initialized client, protocol version, agent name,
-    /// supports session/load).
-    result: Result<(AcpClient, u32, String, bool)>,
+    /// supports session/load, supports session/resume).
+    result: Result<(AcpClient, u32, String, bool, bool)>,
 }
 
 /// Outcome of a non-cancelling steer attempt, forwarded from a per-attempt
@@ -1622,7 +1622,7 @@ impl RespawnGuard {
     /// Send the result and disarm the guard. Uses `try_send` (sync) so there
     /// is no await boundary between marking `sent` and actually enqueueing —
     /// cancellation cannot slip between the two.
-    fn send(mut self, result: Result<(AcpClient, u32, String, bool)>) {
+    fn send(mut self, result: Result<(AcpClient, u32, String, bool, bool)>) {
         // Invariant: try_send succeeds because the channel capacity equals the
         // slot count, and respawn_in_flight guarantees at most one outstanding
         // result per slot. If this ever fails, the channel sizing or the
@@ -2531,7 +2531,13 @@ async fn tokio_main() -> Result<()> {
         while let Ok(rr) = respawn_rx.try_recv() {
             crash_history[rr.index].respawn_in_flight = false;
             match rr.result {
-                Ok((acp, protocol_version, agent_name, supports_load_session)) => {
+                Ok((
+                    acp,
+                    protocol_version,
+                    agent_name,
+                    supports_load_session,
+                    supports_resume_session,
+                )) => {
                     let mut agent = OwnedAgent {
                         index: rr.index,
                         acp,
@@ -2543,6 +2549,7 @@ async fn tokio_main() -> Result<()> {
                         goose_system_prompt_supported: None,
                         protocol_version,
                         supports_load_session,
+                        supports_resume_session,
                     };
                     if let Err(error) = agent.preload_identity_session(&ctx).await {
                         crash_history[rr.index].mark_spawn_failed();
@@ -3574,7 +3581,7 @@ async fn tokio_main() -> Result<()> {
     // Drain any respawn results that completed before the abort. Explicitly
     // shut down returned agents instead of relying on AcpClient::Drop.
     while let Ok(rr) = respawn_rx.try_recv() {
-        if let Ok((mut acp, _, _, _)) = rr.result {
+        if let Ok((mut acp, _, _, _, _)) = rr.result {
             acp.shutdown().await;
             tracing::debug!(agent = rr.index, "reaped respawned agent on shutdown");
         }
@@ -4777,6 +4784,8 @@ async fn initialize_agent_pool(
                         let agent_name = normalized_agent_name(&init_result);
                         let supports_load_session =
                             AcpClient::agent_supports_load_session(&init_result);
+                        let supports_resume_session =
+                            AcpClient::agent_supports_resume_session(&init_result);
                         agent_slots.push(Some(OwnedAgent {
                             index: i,
                             acp,
@@ -4788,6 +4797,7 @@ async fn initialize_agent_pool(
                             goose_system_prompt_supported: None,
                             protocol_version,
                             supports_load_session,
+                            supports_resume_session,
                         }));
                     }
                     Ok(Err(e)) => {
@@ -4838,7 +4848,7 @@ async fn spawn_and_init(
     has_generated_codex_config: bool,
     agent_index: usize,
     observer: Option<observer::ObserverHandle>,
-) -> Result<(AcpClient, u32, String, bool)> {
+) -> Result<(AcpClient, u32, String, bool, bool)> {
     let mut acp = AcpClient::spawn(command, args, extra_env, has_generated_codex_config)
         .await
         .map_err(|e| anyhow::anyhow!("failed to spawn agent: {e}"))?;
@@ -4849,6 +4859,7 @@ async fn spawn_and_init(
             tracing::info!("agent initialized: {init_result}");
             let protocol_version = init_result["protocolVersion"].as_u64().unwrap_or(1) as u32;
             let supports_load_session = AcpClient::agent_supports_load_session(&init_result);
+            let supports_resume_session = AcpClient::agent_supports_resume_session(&init_result);
             acp.observe(
                 "agent_initialized",
                 serde_json::json!({
@@ -4857,7 +4868,13 @@ async fn spawn_and_init(
                 }),
             );
             let agent_name = normalized_agent_name(&init_result);
-            Ok((acp, protocol_version, agent_name, supports_load_session))
+            Ok((
+                acp,
+                protocol_version,
+                agent_name,
+                supports_load_session,
+                supports_resume_session,
+            ))
         }
         Err(e) => {
             // Explicitly shut down the spawned child to prevent zombie/leak.
@@ -7221,6 +7238,7 @@ mod error_outcome_emission_tests {
             // non-systemPrompt path, the simplest valid value.
             protocol_version: 1,
             supports_load_session: false,
+            supports_resume_session: false,
         }
     }
 

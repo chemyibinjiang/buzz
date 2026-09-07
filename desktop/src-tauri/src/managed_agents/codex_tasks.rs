@@ -139,6 +139,19 @@ pub fn codex_shared_app_server_url() -> Result<String, String> {
     .ok_or_else(|| "Codex shared app-server URL is not configured".to_string())
 }
 
+pub fn current_codex_shared_app_server_url(app: &AppHandle) -> Result<String, String> {
+    if std::env::var_os(SHARED_RUNTIME_URL_ENV).is_some() {
+        return codex_shared_app_server_url();
+    }
+    let configured = super::codex_desktop::persisted_shared_runtime_url(app)?;
+    normalize_app_server_url(
+        configured
+            .as_deref()
+            .or(Some(DEFAULT_CODEX_SHARED_APP_SERVER_URL)),
+    )?
+    .ok_or_else(|| "Codex shared app-server URL is not configured".to_string())
+}
+
 fn load_binding_store(app: &AppHandle) -> Result<CodexTaskBindingStore, String> {
     let path = binding_store_path(app)?;
     if !path.exists() {
@@ -153,7 +166,7 @@ fn load_binding_store(app: &AppHandle) -> Result<CodexTaskBindingStore, String> 
     let mut store: CodexTaskBindingStore = serde_json::from_slice(&bytes)
         .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
     if store.version < STORE_VERSION {
-        let shared_url = codex_shared_app_server_url()?;
+        let shared_url = current_codex_shared_app_server_url(app)?;
         if let Ok(tasks) = list_codex_tasks() {
             let models = tasks
                 .into_iter()
@@ -327,18 +340,21 @@ fn normalize_app_server_url(value: Option<&str>) -> Result<Option<String>, Strin
     Ok(Some(parsed.to_string().trim_end_matches('/').to_string()))
 }
 
-fn resolve_codex_task_app_server_url(requested: Option<&str>) -> Result<String, String> {
+fn resolve_codex_task_app_server_url(
+    requested: Option<&str>,
+    shared_url: &str,
+) -> Result<String, String> {
     let requested = normalize_app_server_url(requested)?;
-    let shared_url = codex_shared_app_server_url()?;
     if requested.as_deref().is_some_and(|url| url != shared_url) {
         return Err(format!(
             "Codex task agents use the computer shared runtime at {shared_url}; per-agent app-server URLs are not supported"
         ));
     }
-    Ok(shared_url)
+    Ok(shared_url.to_string())
 }
 
 pub fn prepare_codex_task_binding(
+    app: &AppHandle,
     input: &CreateManagedAgentRequest,
 ) -> Result<Option<CodexTaskBinding>, String> {
     let requested_url = normalize_app_server_url(input.codex_app_server_url.as_deref())?;
@@ -348,8 +364,10 @@ pub fn prepare_codex_task_binding(
         .map(binding_for_task_id)
         .transpose()?;
     if let Some(binding) = binding.as_mut() {
+        let shared_url = current_codex_shared_app_server_url(app)?;
         binding.app_server_url = Some(resolve_codex_task_app_server_url(
             input.codex_app_server_url.as_deref(),
+            &shared_url,
         )?);
         if input.backend != BackendKind::Local {
             return Err("Codex tasks can only be bound to local agents".to_string());
@@ -503,11 +521,13 @@ pub fn task_binding_for_spawn(
             binding.app_server_url = Some(url.clone());
             url
         } else {
-            binding.app_server_url.clone().ok_or_else(|| {
-                "This Codex task binding predates shared runtime setup. Reopen Buzz to migrate it."
-                    .to_string()
-            })?
+            let url = current_codex_shared_app_server_url(app)?;
+            binding.app_server_url = Some(url.clone());
+            url
         };
+        if binding.ssh_host.is_none() {
+            super::codex_desktop::ensure_codex_desktop_uses_shared_runtime(&url)?;
+        }
         ensure_codex_shared_runtime_reachable(&url)?;
     }
     Ok(binding)
@@ -1106,10 +1126,14 @@ mod tests {
             Some(DEFAULT_CODEX_SHARED_APP_SERVER_URL.to_string())
         );
         assert_eq!(
-            resolve_codex_task_app_server_url(None).unwrap(),
+            resolve_codex_task_app_server_url(None, DEFAULT_CODEX_SHARED_APP_SERVER_URL).unwrap(),
             DEFAULT_CODEX_SHARED_APP_SERVER_URL
         );
-        assert!(resolve_codex_task_app_server_url(Some("ws://127.0.0.1:59999")).is_err());
+        assert!(resolve_codex_task_app_server_url(
+            Some("ws://127.0.0.1:59999"),
+            DEFAULT_CODEX_SHARED_APP_SERVER_URL,
+        )
+        .is_err());
     }
 
     #[test]

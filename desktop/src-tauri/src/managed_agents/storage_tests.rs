@@ -426,6 +426,19 @@ fn meaningful_agent_error_from_log_promotes_codex_task_load_timeout() {
 }
 
 #[test]
+fn meaningful_agent_error_from_log_preserves_codex_task_load_agent_error_code() {
+    let file = write_log(
+        "Error: failed to load identity-bound Codex task: Agent reported error (code -32603): Internal error\n",
+    );
+    let result = super::meaningful_agent_error_from_log(file.path()).unwrap();
+    assert_eq!(
+        result.message,
+        "Codex task load failed: Agent reported error (code -32603): Internal error"
+    );
+    assert_eq!(result.code, Some(-32603));
+}
+
+#[test]
 fn strips_ansi_from_typical_tracing_line() {
     let input = "\x1b[2m2026-05-27T15:16:32\x1b[0m \x1b[32m INFO\x1b[0m \x1b[2mbuzz_acp\x1b[0m\x1b[2m:\x1b[0m starting";
     assert_eq!(

@@ -244,3 +244,51 @@
 - 处理：Windows 新启动的 shared runtime 日志迁移到 app-data 同级的隐藏目录，避免长期进程锁住退出登录清理目标；错误诊断仍回退读取旧日志。为兼容已经运行旧 backend 的机器，整目录原子重命名失败时仅允许保留上述两个精确日志路径，其余数据先递归移动到 rollback trash，keychain 删除成功后清除，失败则完整恢复；任何其他锁定文件仍会失败并回滚。
 - 验证：新增 Windows 独占句柄回归测试，确认旧 shared-runtime 日志保持打开时身份数据仍被删除、sentinel 清除且 backend 无需退出；另一个测试确认 keychain 失败会恢复设置并保留 sentinel。reset 聚焦测试 16/16、Windows shared-runtime 聚焦测试 4/4 通过。随后在原问题机器安装 `0.5.18-local.2_c0572483dd83`：先用非交互 SSH 会话验证 keyring 不可用时全部数据正确回滚；再从已登录桌面会话启动，reset sentinel 和 rollback trash 均被清除，旧 Agent PID receipts 归零，两份锁定日志保留，shared app-server 始终保持原 PID `32764` 且 readiness 返回 HTTP 200。
 - 版本/提交：分支 `codex/windows-signout-shared-runtime-logs`；代码提交 `c0572483`，远端验收安装包 SHA-256 `69e5dcdd35a4d8aa81cb8e86ff0c8464b3698cb63f0cd4977af5d9a136b26071`。
+
+## 2026-09-07：删除 Codex task Agent 后遗留 Custom agent 卡片
+
+- 现象：用户删除已绑定 Codex task 的 Agent 后，实例和 task binding 已消失，但 Agents 页面仍显示一个 inactive、报错状态的同名 Custom agent 卡片。
+- 定位：旧 standalone-agent backfill 会以实例 pubkey 作为 64 位 definition slug；`delete_managed_agent` 删除最后一个 task 实例时只把该迁移定义标记为 inactive，没有删除，因此 UI 正确地继续展示了本地 definition 空壳。
+- 处理：删除 Codex task 实例时，若最后引用的 definition id 等于被删实例 pubkey 且不属于 built-in、team 或 shared catalog，则同步删除迁移生成的 definition；普通可复用 persona 仍只停用。启动迁移另会备份 store，并清理已存在的 inactive、无引用、64 位 pubkey definition。
+- 验证：backfill 聚焦测试 9/9、删除判定测试 2/2 通过；覆盖已有幽灵清理、仍被实例引用的定义保留、普通自定义 persona 保留以及新删除流程判定。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Relay 地址迁移后 Welcome Team 身份重复
+
+- 现象：Channel members 的 Agent 搜索中同时出现两套 Fizz、Honey 和 Bumble；本地记录显示它们分别创建于旧 relay 地址和新的校园网地址，具有不同公钥。
+- 定位：managed-agent 运行层已采用 agents-everywhere 语义，忽略实例创建时保存的 relay pin，始终连接当前 workspace relay；Welcome Team 初始化和 kickoff 仍按旧 `relay_url` 做严格匹配，地址迁移后误判三个内置身份不存在并重新创建。
+- 处理：Welcome Team 的查找、kickoff 和历史身份复用统一遵循 agents-everywhere 语义，不再让创建时 relay 字符串参与身份选择；Agents 页面新增 `Open Codex Desktop` 主操作，shared runtime 健康时直接打开 Desktop，setup、unavailable 或私有 runtime 冲突时才展示诊断与接管面板。
+- 验证：Welcome Team 聚焦单测 20/20、Codex shared-runtime 面板单测、Desktop TypeScript typecheck 与 Biome 检查通过；E2E mock build 成功，并在 1280×720 下验证 Agents 页入口和 runtime dialog。独立截图助手同时改用可取消、1 秒封顶的动画等待，修复 loading spinner 卸载时的 `AbortError`。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Codex task Agent 启动可绕过 Desktop 私有 backend 检查
+
+- 现象：电脑级 shared app-server 已在 `ws://127.0.0.1:51919` 运行时，Codex Desktop 仍可能保留自己的私有 app-server；部分 Agent 启动入口只检查 shared 端口可达，随后才以 task writer conflict 或加载超时失败。
+- 定位：Desktop 状态面板和接管操作已经能识别经验证的 Codex Desktop 私有 backend，但 `spawn_agent_child` 的统一 task-binding 前置检查没有复用该判定。自动恢复、跨频道唤醒等不经过设置面板的入口因此仍可绕过。
+- 处理：本地 Codex task 在任何 harness spawn 前都重新检查 Codex Desktop 进程树；发现私有 backend 时立即拒绝，并引导用户通过显式确认的 Take over 流程重连。SSH task 不检查本机 Desktop，独立 Codex CLI、Scientist Connector 和其他未验证进程也不会被误杀。
+- 验证：Codex Desktop 进程分类与 takeover 聚焦测试 12/12、错误呈现测试 36/36、Desktop TypeScript typecheck 与 Biome 检查通过；本次修改文件单独通过 rustfmt 检查。全仓库 fmt 仍报告 `Lin/develop` 基线中的既有格式差异，本次未改动这些文件。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Desktop 正在工作的 Codex task 被误报为 60 秒加载超时
+
+- 现象：`数据复写管家` 在 Buzz 中反复显示“60 秒内未加载”，点击 Retry 仍然失败。
+- 定位：task `01a07496-5d2b-7493-b631-6af817f0e0ce` 同时在 Codex Desktop 中处于 active 状态，Desktop backend 正常持有 writer lock；harness 实际约 1 秒内收到 adapter 包装后的 `-32603 Internal error`，并未等待 60 秒。用户运行的是未包含统一 Start 前置检查的旧 Desktop GUI，因此 Retry 仍启动了 harness；日志解析又把所有 identity-bound load 错误统一改写为 `-32004`。该 task 的 rollout 约 61.4 MB，空闲后使用 `session/load` 还会产生不必要的完整历史回放。
+- 处理：沿用统一 spawn 前置检查，在任何入口发现 Codex Desktop 私有 backend 时直接显示 Busy/Take over，不启动 harness；日志解析保留嵌入的 Agent 错误码，仅在错误文本确实包含 timeout 时标记 `-32004`。对声明 `sessionCapabilities.resume` 的 adapter，identity-bound task 改用 `session/resume`，恢复 Codex 上下文但不经 ACP 回放完整历史；旧 adapter 继续回退 `session/load`。
+- 验证：现场确认 task 在 Codex Desktop 中为 active，51919 shared runtime 健康且当前 lock 与 Desktop 占用一致；resume capability/request、Desktop 日志错误解析及 Codex 聚焦测试通过。完整 Busy UI 需安装含 Desktop 前置检查的新构建后复测，空闲 task 的真实 resume 仍待验收。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：从 Buzz 显式启动 Codex Desktop 并收敛 app-server
+
+- 现象：用户需要从 Buzz 启动 Codex，并确保 Codex Desktop 不再保留与 51919 shared runtime 竞争的私有 app-server；原入口名为 `Open Codex Desktop`，冲突处理藏在 runtime 面板的 `Take over` 中，意图不清晰。
+- 定位：backend 已具备安全接管流程：只终止经包身份、父子进程树和 executable path 验证的 Codex Desktop 及其私有 backend，保留 shared app-server，并以 `CODEX_APP_SERVER_WS_URL` 重开 Desktop。独立 Codex CLI、SSH runtime 与 Scientist Connector 不属于目标集合。
+- 处理：Agents 页和 runtime 面板统一使用 `Start Codex Desktop`。检测到冲突时显示明确确认框，说明会中断 active turn/未保存草稿，并将操作命名为 `Close conflicts and start`；确认后复用现有安全接管流程。
+- 验证：runtime panel 聚焦测试、Desktop typecheck 与 Biome 检查通过；进程终止边界由既有 Codex Desktop 分类和 takeover Rust 测试覆盖。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Codex shared runtime 固定端口冲突
+
+- 现象：`CODEX_APP_SERVER_WS_URL` 固定指向 `ws://127.0.0.1:51919`；若该端口被非共享服务占用，Buzz 无法启动 shared runtime，Desktop 与 task Agent 也没有共同迁移到其他端口的机制。
+- 定位：shared runtime 配置只持久化 `enabled`，状态探测、Desktop 启动和本地 task binding 分别从默认值或旧绑定读取 URL。直接在启动器里换端口会让多个消费者指向不同 backend。
+- 处理：将 `51919` 保留为首选端口，并在版本化配置中持久化实际 URL。健康的已配置 runtime 会直接复用；首选端口被无关进程占用时，仅在 loopback 上顺延探测 `51920..51950`，绝不终止占用者。成功启动后原子保存地址；状态面板、Desktop 启动/接管和每次本地 Agent spawn 均读取该地址，旧 task binding 自动刷新。SSH 和显式远程 URL 不参与本地端口改写。
+- 验证：Tauri 编译通过；Codex Desktop 聚焦测试 16/16、shared-runtime 默认解析测试 1/1、runtime panel 测试 2/2 通过，Desktop TypeScript typecheck 与 Biome 检查通过。新增用例覆盖旧配置兼容、候选端口范围、远程 URL 不改写和真实 loopback 端口占用；现场现有 51919 shared runtime 保持原 PID 且 readiness 为 HTTP 200。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。

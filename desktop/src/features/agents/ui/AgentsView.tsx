@@ -1,5 +1,12 @@
 import * as React from "react";
-import { EllipsisVertical, Link2, OctagonX, Settings2 } from "lucide-react";
+import {
+  EllipsisVertical,
+  Link2,
+  MonitorUp,
+  OctagonX,
+  Settings2,
+} from "lucide-react";
+import { toast } from "sonner";
 import {
   consumePendingSnapshotImport,
   subscribeSnapshotImport,
@@ -9,6 +16,7 @@ import { AddTeamToChannelDialog } from "./AddTeamToChannelDialog";
 import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentDialog } from "./AgentDialog";
 import { CodexTaskAgentDialog } from "./CodexTaskAgentDialog";
+import { CodexSharedRuntimeDialog } from "./CodexSharedRuntimeDialog";
 import { PersonaCatalogDialog } from "./PersonaCatalogDialog";
 import { PersonaDeleteDialog } from "./PersonaDeleteDialog";
 import { PersonaShareDialog } from "./PersonaShareDialog";
@@ -28,6 +36,14 @@ import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
+import {
+  hasCodexDesktopRuntimeConflict,
+  isCodexSharedRuntimeUsable,
+} from "@/features/agents/codexSharedRuntimeStatus";
+import {
+  getCodexSharedRuntimeStatus,
+  launchCodexDesktopShared,
+} from "@/shared/api/codexTasks";
 import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
@@ -51,6 +67,8 @@ export function AgentsView() {
   const compactActionsTriggerRef = React.useRef<HTMLButtonElement>(null);
   const [isAiDefaultsOpen, setIsAiDefaultsOpen] = React.useState(false);
   const [isCodexTaskOpen, setIsCodexTaskOpen] = React.useState(false);
+  const [isCodexRuntimeOpen, setIsCodexRuntimeOpen] = React.useState(false);
+  const [isOpeningCodex, setIsOpeningCodex] = React.useState(false);
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -60,6 +78,30 @@ export function AgentsView() {
   function openAiDefaults(trigger: HTMLButtonElement | null) {
     aiDefaultsTriggerRef.current = trigger;
     setIsAiDefaultsOpen(true);
+  }
+
+  async function openCodexDesktop() {
+    setIsOpeningCodex(true);
+    try {
+      const status = await getCodexSharedRuntimeStatus();
+      if (
+        !isCodexSharedRuntimeUsable(status) ||
+        hasCodexDesktopRuntimeConflict(status)
+      ) {
+        setIsCodexRuntimeOpen(true);
+        return;
+      }
+
+      await launchCodexDesktopShared();
+      toast.success("Opening Codex Desktop");
+    } catch (cause) {
+      setIsCodexRuntimeOpen(true);
+      toast.error("Could not open Codex Desktop", {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+    } finally {
+      setIsOpeningCodex(false);
+    }
   }
 
   function setAiDefaultsDialogOpen(open: boolean) {
@@ -148,6 +190,16 @@ export function AgentsView() {
                     Add Codex task
                   </Button>
                   <Button
+                    data-testid="open-codex-desktop-button"
+                    disabled={isOpeningCodex}
+                    onClick={() => void openCodexDesktop()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <MonitorUp />
+                    {isOpeningCodex ? "Starting..." : "Start Codex Desktop"}
+                  </Button>
+                  <Button
                     data-testid="agent-defaults-button"
                     ref={fullAiDefaultsTriggerRef}
                     onClick={(event) => openAiDefaults(event.currentTarget)}
@@ -192,6 +244,13 @@ export function AgentsView() {
                     <DropdownMenuItem onSelect={() => setIsCodexTaskOpen(true)}>
                       <Link2 />
                       Add Codex task
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={isOpeningCodex}
+                      onSelect={() => void openCodexDesktop()}
+                    >
+                      <MonitorUp />
+                      {isOpeningCodex ? "Starting..." : "Start Codex Desktop"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => {
@@ -319,6 +378,11 @@ export function AgentsView() {
         onCreated={(agent) => openProfilePanel?.(agent.pubkey)}
         onOpenChange={setIsCodexTaskOpen}
         open={isCodexTaskOpen}
+      />
+
+      <CodexSharedRuntimeDialog
+        onOpenChange={setIsCodexRuntimeOpen}
+        open={isCodexRuntimeOpen}
       />
 
       {agents.agentToAddToChannel ? (

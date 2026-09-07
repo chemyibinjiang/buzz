@@ -274,9 +274,15 @@ try {
   // Wait for all CSS/Web animations to finish before capturing.
   // Radix components animate in via CSS — without this, screenshots
   // are taken mid-transition and appear greyed-out or partially rendered.
-  await page.evaluate(() =>
-    Promise.all(document.getAnimations().map((a) => a.finished)),
-  );
+  await page.evaluate(() => {
+    const settled = Promise.all(
+      document
+        .getAnimations()
+        .map((animation) => animation.finished.catch(() => undefined)),
+    );
+    const ceilingHit = new Promise((resolve) => setTimeout(resolve, 1000));
+    return Promise.race([settled, ceilingHit]);
+  });
 
   const filepath = join(outdir, `${args.name}.png`);
   const clipOpts = args.clip
