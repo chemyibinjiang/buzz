@@ -63,6 +63,7 @@ export const AGENT_KEYRING_UNAVAILABLE_COPY =
 const CODEX_WRITER_CONFLICT_MARKERS = [
   "already has an active writer",
   "already has a live local writer",
+  "still running outside the shared runtime",
 ] as const;
 
 export function isCodexWriterConflictError(

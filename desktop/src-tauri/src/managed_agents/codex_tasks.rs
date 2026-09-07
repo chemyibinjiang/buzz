@@ -508,6 +508,9 @@ pub fn task_binding_for_spawn(
                     .to_string()
             })?
         };
+        if binding.ssh_host.is_none() {
+            super::codex_desktop::ensure_codex_desktop_uses_shared_runtime(&url)?;
+        }
         ensure_codex_shared_runtime_reachable(&url)?;
     }
     Ok(binding)

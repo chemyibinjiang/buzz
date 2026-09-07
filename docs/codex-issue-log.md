@@ -260,3 +260,11 @@
 - 处理：Welcome Team 的查找、kickoff 和历史身份复用统一遵循 agents-everywhere 语义，不再让创建时 relay 字符串参与身份选择；Agents 页面新增 `Open Codex Desktop` 主操作，shared runtime 健康时直接打开 Desktop，setup、unavailable 或私有 runtime 冲突时才展示诊断与接管面板。
 - 验证：Welcome Team 聚焦单测 20/20、Codex shared-runtime 面板单测、Desktop TypeScript typecheck 与 Biome 检查通过；E2E mock build 成功，并在 1280×720 下验证 Agents 页入口和 runtime dialog。独立截图助手同时改用可取消、1 秒封顶的动画等待，修复 loading spinner 卸载时的 `AbortError`。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Codex task Agent 启动可绕过 Desktop 私有 backend 检查
+
+- 现象：电脑级 shared app-server 已在 `ws://127.0.0.1:51919` 运行时，Codex Desktop 仍可能保留自己的私有 app-server；部分 Agent 启动入口只检查 shared 端口可达，随后才以 task writer conflict 或加载超时失败。
+- 定位：Desktop 状态面板和接管操作已经能识别经验证的 Codex Desktop 私有 backend，但 `spawn_agent_child` 的统一 task-binding 前置检查没有复用该判定。自动恢复、跨频道唤醒等不经过设置面板的入口因此仍可绕过。
+- 处理：本地 Codex task 在任何 harness spawn 前都重新检查 Codex Desktop 进程树；发现私有 backend 时立即拒绝，并引导用户通过显式确认的 Take over 流程重连。SSH task 不检查本机 Desktop，独立 Codex CLI、Scientist Connector 和其他未验证进程也不会被误杀。
+- 验证：Codex Desktop 进程分类与 takeover 聚焦测试 12/12、错误呈现测试 36/36、Desktop TypeScript typecheck 与 Biome 检查通过；本次修改文件单独通过 rustfmt 检查。全仓库 fmt 仍报告 `Lin/develop` 基线中的既有格式差异，本次未改动这些文件。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。

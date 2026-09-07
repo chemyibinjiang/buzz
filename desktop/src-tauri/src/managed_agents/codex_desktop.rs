@@ -305,6 +305,11 @@ fn ensure_ordinary_desktop_launch_allowed(
     )
 }
 
+pub(crate) fn ensure_codex_desktop_uses_shared_runtime(shared_url: &str) -> Result<(), String> {
+    let snapshot = snapshot_codex_desktop_processes(shared_url)?;
+    ensure_ordinary_desktop_launch_allowed(&snapshot)
+}
+
 fn require_takeover_confirmation(confirmed: bool) -> Result<(), String> {
     if confirmed {
         Ok(())
