@@ -326,6 +326,7 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     // 30177 projection to its slim shape.
     backfill_standalone_agents(app);
     deduplicate_backfilled_agent_instances(app);
+    prune_orphaned_backfilled_definitions(app);
     detach_directory_backed_teams(app);
     reconcile_provider_mcp_commands(app);
     reconcile_databricks_v1_to_v2(app);
@@ -1644,7 +1645,7 @@ mod fold;
 pub use fold::fold_personas_into_agent_store;
 use fold::load_persona_runtimes;
 mod backfill;
-pub use backfill::backfill_standalone_agents;
+pub use backfill::{backfill_standalone_agents, prune_orphaned_backfilled_definitions};
 mod detach;
 pub use detach::detach_directory_backed_teams;
 mod team_suffix;

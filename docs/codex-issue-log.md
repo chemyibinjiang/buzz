@@ -244,3 +244,11 @@
 - 处理：Windows 新启动的 shared runtime 日志迁移到 app-data 同级的隐藏目录，避免长期进程锁住退出登录清理目标；错误诊断仍回退读取旧日志。为兼容已经运行旧 backend 的机器，整目录原子重命名失败时仅允许保留上述两个精确日志路径，其余数据先递归移动到 rollback trash，keychain 删除成功后清除，失败则完整恢复；任何其他锁定文件仍会失败并回滚。
 - 验证：新增 Windows 独占句柄回归测试，确认旧 shared-runtime 日志保持打开时身份数据仍被删除、sentinel 清除且 backend 无需退出；另一个测试确认 keychain 失败会恢复设置并保留 sentinel。reset 聚焦测试 16/16、Windows shared-runtime 聚焦测试 4/4 通过。随后在原问题机器安装 `0.5.18-local.2_c0572483dd83`：先用非交互 SSH 会话验证 keyring 不可用时全部数据正确回滚；再从已登录桌面会话启动，reset sentinel 和 rollback trash 均被清除，旧 Agent PID receipts 归零，两份锁定日志保留，shared app-server 始终保持原 PID `32764` 且 readiness 返回 HTTP 200。
 - 版本/提交：分支 `codex/windows-signout-shared-runtime-logs`；代码提交 `c0572483`，远端验收安装包 SHA-256 `69e5dcdd35a4d8aa81cb8e86ff0c8464b3698cb63f0cd4977af5d9a136b26071`。
+
+## 2026-09-07：删除 Codex task Agent 后遗留 Custom agent 卡片
+
+- 现象：用户删除已绑定 Codex task 的 Agent 后，实例和 task binding 已消失，但 Agents 页面仍显示一个 inactive、报错状态的同名 Custom agent 卡片。
+- 定位：旧 standalone-agent backfill 会以实例 pubkey 作为 64 位 definition slug；`delete_managed_agent` 删除最后一个 task 实例时只把该迁移定义标记为 inactive，没有删除，因此 UI 正确地继续展示了本地 definition 空壳。
+- 处理：删除 Codex task 实例时，若最后引用的 definition id 等于被删实例 pubkey 且不属于 built-in、team 或 shared catalog，则同步删除迁移生成的 definition；普通可复用 persona 仍只停用。启动迁移另会备份 store，并清理已存在的 inactive、无引用、64 位 pubkey definition。
+- 验证：backfill 聚焦测试 9/9、删除判定测试 2/2 通过；覆盖已有幽灵清理、仍被实例引用的定义保留、普通自定义 persona 保留以及新删除流程判定。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。

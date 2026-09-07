@@ -16,10 +16,10 @@ use crate::{
         save_agents_with_replaced_codex_task_binding, save_managed_agents, save_personas,
         start_managed_agent_process, stop_managed_agent_process, stop_managed_agent_workspace_pair,
         sync_managed_agent_processes, try_regenerate_nest, validate_provider_config,
-        AgentKeyAvailability, AgentReadiness, BackendKind, CreateManagedAgentRequest,
-        CreateManagedAgentResponse, ManagedAgentRecord, ManagedAgentRuntimeKey,
-        ManagedAgentSummary, RelayMeshConfig, DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM,
-        DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
+        AgentDefinition, AgentKeyAvailability, AgentReadiness, BackendKind,
+        CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
+        ManagedAgentRuntimeKey, ManagedAgentSummary, RelayMeshConfig, DEFAULT_ACP_COMMAND,
+        DEFAULT_AGENT_PARALLELISM, DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
     },
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
@@ -1435,6 +1435,14 @@ pub async fn stop_managed_agent(
 
 // Async so the blocking body (disk reads/writes, process termination, keyring
 // delete, nest regeneration) runs off the main UI thread via spawn_blocking.
+fn is_backfilled_task_definition(persona: &AgentDefinition, deleted_pubkey: &str) -> bool {
+    persona.id == deleted_pubkey
+        && !persona.is_builtin
+        && persona.source_team.is_none()
+        && persona.catalog_source.is_none()
+        && !persona.shared
+}
+
 #[tauri::command]
 pub async fn delete_managed_agent(
     pubkey: String,
@@ -1517,8 +1525,7 @@ pub async fn delete_managed_agent(
                 if !still_referenced {
                     match load_personas(&app) {
                         Ok(mut personas) => {
-                            if let Some(persona) = personas.iter_mut().find(|p| p.id == persona_id)
-                            {
+                            if let Some(persona) = personas.iter().find(|p| p.id == persona_id) {
                                 // Never retire built-in, team-owned, or
                                 // shared-catalog definitions as a side effect
                                 // of deleting one task instance.
@@ -1526,13 +1533,22 @@ pub async fn delete_managed_agent(
                                     && persona.source_team.is_none()
                                     && persona.catalog_source.is_none()
                                     && !persona.shared
-                                    && persona.is_active
                                 {
-                                    persona.is_active = false;
-                                    persona.updated_at = now_iso();
+                                    // The B5 migration used the instance pubkey
+                                    // as its generated definition id. Removing
+                                    // that task must remove the generated card,
+                                    // not leave an inactive Custom agent behind.
+                                    if is_backfilled_task_definition(persona, &pubkey) {
+                                        personas.retain(|p| p.id != persona_id);
+                                    } else if let Some(persona) =
+                                        personas.iter_mut().find(|p| p.id == persona_id)
+                                    {
+                                        persona.is_active = false;
+                                        persona.updated_at = now_iso();
+                                    }
                                     if let Err(error) = save_personas(&app, &personas) {
                                         eprintln!(
-                                            "buzz-desktop: failed to retire deleted Codex task persona {persona_id}: {error}"
+                                            "buzz-desktop: failed to clean up deleted Codex task persona {persona_id}: {error}"
                                         );
                                     }
                                 }

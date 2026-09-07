@@ -133,6 +133,22 @@ fn persona_record(id: &str, model: Option<&str>, provider: Option<&str>) -> Agen
     }
 }
 
+#[test]
+fn deleting_backfilled_task_instance_removes_its_generated_definition() {
+    let pubkey = "a".repeat(64);
+    let persona = persona_record(&pubkey, None, None);
+
+    assert!(is_backfilled_task_definition(&persona, &pubkey));
+}
+
+#[test]
+fn deleting_task_instance_preserves_reusable_definition() {
+    let pubkey = "a".repeat(64);
+    let persona = persona_record("reusable-agent", None, None);
+
+    assert!(!is_backfilled_task_definition(&persona, &pubkey));
+}
+
 /// Auto-archive uses the same NIP-IA wire builder as the explicit GUI action,
 /// attaches owner consent, and marks a deliberate delete as `retired`.
 #[test]

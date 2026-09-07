@@ -46,6 +46,79 @@ pub fn backfill_standalone_agents(app: &tauri::AppHandle) {
     }
 }
 
+/// Remove inactive definitions left behind by the old task-agent delete path.
+///
+/// The standalone-agent backfill used the agent pubkey as the manufactured
+/// definition slug. A definition with that shape is safe to remove once it is
+/// inactive and no keyed instance references it. Ordinary custom definitions
+/// use user-facing slugs and are intentionally preserved.
+pub fn prune_orphaned_backfilled_definitions(app: &tauri::AppHandle) {
+    let Ok(base_dir) = crate::managed_agents::managed_agents_base_dir(app) else {
+        return;
+    };
+    match prune_orphaned_backfilled_definitions_in_dir(&base_dir) {
+        Ok(0) => {}
+        Ok(pruned) => eprintln!(
+            "buzz-desktop: standalone-backfill: pruned {pruned} orphaned task definitions"
+        ),
+        Err(e) => eprintln!("buzz-desktop: standalone-backfill: orphan cleanup failed: {e}"),
+    }
+}
+
+fn is_canonical_pubkey(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn prune_orphaned_backfilled_definitions_in_dir(base_dir: &Path) -> Result<usize, String> {
+    let agents_path = base_dir.join("managed-agents.json");
+    if !agents_path.exists() {
+        return Ok(0);
+    }
+
+    let content = std::fs::read_to_string(&agents_path)
+        .map_err(|e| format!("failed to read managed-agents.json: {e}"))?;
+    let mut all: Vec<ManagedAgentRecord> = serde_json::from_str(&content)
+        .map_err(|e| format!("failed to parse managed-agents.json: {e}"))?;
+    let referenced: std::collections::HashSet<String> = all
+        .iter()
+        .filter(|record| !record.pubkey.is_empty())
+        .filter_map(|record| record.persona_id.clone())
+        .collect();
+    let original_len = all.len();
+
+    all.retain(|record| {
+        let Some(slug) = record.slug.as_deref() else {
+            return true;
+        };
+        let orphaned_backfill = record.pubkey.is_empty()
+            && !record.is_active
+            && !record.is_builtin
+            && record.source_team.is_none()
+            && record.catalog_source.is_none()
+            && !record.shared
+            && is_canonical_pubkey(slug)
+            && !referenced.contains(slug);
+        !orphaned_backfill
+    });
+
+    let pruned = original_len - all.len();
+    if pruned == 0 {
+        return Ok(0);
+    }
+
+    let backup =
+        crate::util::resolved_backup_path(&agents_path, "managed-agents.json.pre-orphan-prune.bak");
+    crate::util::create_restricted_backup_once(&backup, content.as_bytes())
+        .map_err(|e| format!("failed to back up agent store before orphan cleanup: {e}"))?;
+    let payload = serde_json::to_vec_pretty(&all)
+        .map_err(|e| format!("failed to serialize managed-agents.json: {e}"))?;
+    crate::managed_agents::atomic_write_json_restricted(&agents_path, &payload)?;
+    Ok(pruned)
+}
+
 /// Core backfill logic, decoupled from the Tauri `AppHandle` for testing.
 /// Returns the number of records backfilled (0 = nothing to do).
 fn backfill_standalone_agents_in_dir(base_dir: &Path) -> Result<usize, String> {
