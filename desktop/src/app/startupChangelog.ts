@@ -8,6 +8,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const STARTUP_CHANGELOG: StartupChangelogEntry[] = [
   {
+    date: "2026-09-07",
+    items: [
+      "【主要更新】增强 Relay 连接安全和断线恢复，降低公网、内网切换及长连接异常造成的消息中断。",
+      "修复线程回复和 Profile 批量加载在 Relay 较慢或重连时失败的问题，并改进恢复后的数据补齐。",
+      "增强应用状态重置和 Codex runtime 生命周期处理，减少切换 Community、退出或重新连接后的残留状态。",
+      "验证 Relay 事件后再进入 Agent prompt 路由，避免无效或不完整事件影响 Agent 工作流。",
+    ],
+  },
+  {
     date: "2026-09-05",
     items: [
       "【主要更新】兼容新版 Codex Desktop 的版本化 backend 路径，连接 task 前可以正确检测并接管已有私有 app-server。",

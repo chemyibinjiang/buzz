@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.18
+
+### Buzz Codex Lab
+
+- 增强 Relay 安全校验、连接恢复和长连接韧性。
+- 修复线程回复与 Profile 批量加载在 Relay 较慢或重连时的数据缺失。
+- 改进 Community 状态重置及 Codex shared runtime 生命周期处理。
+- 兼容新版 Codex Desktop backend，并保留 SSH task、LAN Relay 和 updater 能力。
+
 ## v0.5.11
 
 ### Desktop and shared changes
