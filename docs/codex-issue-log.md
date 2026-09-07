@@ -308,3 +308,11 @@
 - 处理：Buzz shared runtime 启动时注入一个合法、禁用的 `codex_app` stdio transport 基底。Desktop 的局部工具过滤配置可安全合并并恢复 task，同时不会让独立 Buzz backend 冒充 Desktop 的短生命周期 app-tools named pipe。
 - 验证：无基底的真实 51919 server 对局部 `codex_app` 覆盖返回 `invalid transport`；使用新启动参数的临时 51949 server 在相同覆盖下成功恢复 task `01a07496-5d2b-7493-b631-6af817f0e0ce` 的 55 个 turns。Rust 启动参数回归测试覆盖有无 Code Mode host 两条路径。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-08：shared app-server 恢复 task 后缺少 Codex Desktop 原生工具
+
+- 现象：禁用的 `codex_app` transport 能消除 `invalid transport` 并恢复 task，但 shared app-server 下的 task 永远拿不到 Desktop 提供的 `read_thread`、屏幕上下文等原生工具，与私有 Desktop backend 行为不一致。
+- 定位：Codex Desktop 每次启动会创建随机的 `codex-browser-use-*` named pipe，并只向自己启动的私有 stdio backend 注入 pipe 和官方 `codex-app-tools/server.mjs`；外部 WebSocket server 无法继承该进程环境。pipe 生命周期短于 shared app-server，因此也不能写死在 app-server 启动参数里。
+- 处理：shared runtime 改用稳定的完整 stdio transport，指向 Buzz 安装到 shared-runtime 支持目录的轻量 Node bridge。Buzz 显式启动 Desktop 前后对 named pipe 做差集，只登记本次唯一的新 pipe 与同一 Codex 包内的官方 `server.mjs`；bridge 在每个 task 启动时读取 registry，Desktop 在线时动态加载官方实现，离线或 registry 失效时提供合法的空 MCP。默认 `enabled_tools=[]` 避免后台 Buzz Agent 意外控制 GUI，Desktop 的逐 task 工具过滤仍可正常覆盖。registry 和 bridge 位于身份数据目录外，退出登录或重置 Buzz 不会破坏仍在运行的 shared runtime。
+- 验证：Node 单元测试覆盖 MCP 降级握手、空工具、有效和失效 registry；Rust 单元测试覆盖脚本安装、registry 状态切换、TOML transport 与持久目录。真实 Windows 链路 `cmd.exe -> bridge -> Codex 官方 server.mjs -> Desktop pipe` 返回 38 个工具，包含 `read_thread` 和 `capture_screen_context`；临时 51949 app-server 在 Desktop 的局部 `enabled_tools` 覆盖下成功恢复 task `01a07496-5d2b-7493-b631-6af817f0e0ce` 的 55 个 turns，未再出现 `invalid transport`。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
