@@ -2,10 +2,11 @@ import * as React from "react";
 import {
   EllipsisVertical,
   Link2,
-  MonitorCog,
+  MonitorUp,
   OctagonX,
   Settings2,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   consumePendingSnapshotImport,
   subscribeSnapshotImport,
@@ -35,6 +36,14 @@ import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
+import {
+  hasCodexDesktopRuntimeConflict,
+  isCodexSharedRuntimeUsable,
+} from "@/features/agents/codexSharedRuntimeStatus";
+import {
+  getCodexSharedRuntimeStatus,
+  launchCodexDesktopShared,
+} from "@/shared/api/codexTasks";
 import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
@@ -59,6 +68,7 @@ export function AgentsView() {
   const [isAiDefaultsOpen, setIsAiDefaultsOpen] = React.useState(false);
   const [isCodexTaskOpen, setIsCodexTaskOpen] = React.useState(false);
   const [isCodexRuntimeOpen, setIsCodexRuntimeOpen] = React.useState(false);
+  const [isOpeningCodex, setIsOpeningCodex] = React.useState(false);
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -68,6 +78,30 @@ export function AgentsView() {
   function openAiDefaults(trigger: HTMLButtonElement | null) {
     aiDefaultsTriggerRef.current = trigger;
     setIsAiDefaultsOpen(true);
+  }
+
+  async function openCodexDesktop() {
+    setIsOpeningCodex(true);
+    try {
+      const status = await getCodexSharedRuntimeStatus();
+      if (
+        !isCodexSharedRuntimeUsable(status) ||
+        hasCodexDesktopRuntimeConflict(status)
+      ) {
+        setIsCodexRuntimeOpen(true);
+        return;
+      }
+
+      await launchCodexDesktopShared();
+      toast.success("Opening Codex Desktop");
+    } catch (cause) {
+      setIsCodexRuntimeOpen(true);
+      toast.error("Could not open Codex Desktop", {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+    } finally {
+      setIsOpeningCodex(false);
+    }
   }
 
   function setAiDefaultsDialogOpen(open: boolean) {
@@ -156,13 +190,14 @@ export function AgentsView() {
                     Add Codex task
                   </Button>
                   <Button
-                    data-testid="codex-runtime-button"
-                    onClick={() => setIsCodexRuntimeOpen(true)}
+                    data-testid="open-codex-desktop-button"
+                    disabled={isOpeningCodex}
+                    onClick={() => void openCodexDesktop()}
                     size="sm"
                     variant="outline"
                   >
-                    <MonitorCog />
-                    Codex runtime
+                    <MonitorUp />
+                    {isOpeningCodex ? "Opening..." : "Open Codex Desktop"}
                   </Button>
                   <Button
                     data-testid="agent-defaults-button"
@@ -211,10 +246,11 @@ export function AgentsView() {
                       Add Codex task
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onSelect={() => setIsCodexRuntimeOpen(true)}
+                      disabled={isOpeningCodex}
+                      onSelect={() => void openCodexDesktop()}
                     >
-                      <MonitorCog />
-                      Codex runtime
+                      <MonitorUp />
+                      {isOpeningCodex ? "Opening..." : "Open Codex Desktop"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => {
