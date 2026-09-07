@@ -425,6 +425,8 @@ pub struct OwnedAgent {
     pub protocol_version: u32,
     /// Whether the agent advertised `agentCapabilities.loadSession` at init.
     pub supports_load_session: bool,
+    /// Whether the agent advertised `sessionCapabilities.resume` at init.
+    pub supports_resume_session: bool,
 }
 
 /// Package name reported by `claude-agent-acp` in its `initialize` response.
@@ -1301,20 +1303,32 @@ async fn restore_identity_session(
     ctx: &PromptContext,
     binding: &CodexTaskBinding,
 ) -> Result<LoadedSession, AcpError> {
-    if !agent.supports_load_session {
+    if !agent.supports_resume_session && !agent.supports_load_session {
         return Err(AcpError::Protocol(
-            "the configured Codex adapter does not advertise session/load; update the adapter before starting this task-bound agent"
+            "the configured Codex adapter does not advertise session/resume or session/load; update the adapter before starting this task-bound agent"
                 .into(),
         ));
     }
-    let response = agent
-        .acp
-        .session_load_full(
-            &binding.workspace,
-            &binding.task_id,
-            ctx.mcp_servers.clone(),
-        )
-        .await?;
+    let response = if agent.supports_resume_session {
+        agent
+            .acp
+            .session_resume_full(
+                &binding.workspace,
+                &binding.task_id,
+                ctx.mcp_servers.clone(),
+            )
+            .await
+    } else {
+        agent
+            .acp
+            .session_load_full(
+                &binding.workspace,
+                &binding.task_id,
+                ctx.mcp_servers.clone(),
+            )
+            .await
+    };
+    let response = response?;
     apply_loaded_session_settings(agent, ctx, &response).await;
     Ok(LoadedSession {
         session_id: response.session_id,
@@ -6684,6 +6698,7 @@ done"#
             goose_system_prompt_supported: None,
             protocol_version: 1,
             supports_load_session: false,
+            supports_resume_session: false,
         };
         agent.state.heartbeat_session = Some("live-session".into());
 
@@ -6779,6 +6794,7 @@ done"#
             goose_system_prompt_supported: None,
             protocol_version: 1,
             supports_load_session: false,
+            supports_resume_session: false,
         };
         agent
             .state
@@ -6952,6 +6968,7 @@ done"#
             goose_system_prompt_supported: None,
             protocol_version: 1,
             supports_load_session: false,
+            supports_resume_session: false,
         };
         agent
             .state
@@ -7103,6 +7120,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             goose_system_prompt_supported: None,
             protocol_version: 1,
             supports_load_session: false,
+            supports_resume_session: false,
         };
         agent
             .state
@@ -8211,6 +8229,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             goose_system_prompt_supported: None,
             protocol_version: 2,
             supports_load_session: false,
+            supports_resume_session: false,
         };
 
         // Simulate dispatch: install a steer receiver (normally done by
@@ -8270,6 +8289,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             goose_system_prompt_supported: None,
             protocol_version: 2,
             supports_load_session: false,
+            supports_resume_session: false,
         };
 
         // Simulate a completed turn: `steer_rx` was consumed by the read loop

@@ -783,6 +783,32 @@ impl AcpClient {
         })
     }
 
+    /// Resume an existing session without replaying its message history.
+    pub async fn session_resume_full(
+        &mut self,
+        cwd: &str,
+        session_id: &str,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let params = serde_json::json!({
+            "cwd": cwd,
+            "sessionId": session_id,
+            "mcpServers": mcp_servers,
+        });
+        let result = self.send_request("session/resume", params).await?;
+        let resolved_id = result
+            .get("sessionId")
+            .and_then(|value| value.as_str())
+            .unwrap_or(session_id)
+            .to_owned();
+        tracing::info!(target: "acp::session", "session resumed: {resolved_id}");
+        Ok(SessionNewResponse {
+            session_id: resolved_id,
+            raw: result,
+            loaded_buzz_standing_context: false,
+        })
+    }
+
     /// Send `session/fork` to branch a stored session into a new session ID.
     pub async fn session_fork_full(
         &mut self,
@@ -819,6 +845,13 @@ impl AcpClient {
             .and_then(|caps| caps.get("loadSession"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
+    }
+
+    /// Returns true when an initialize result advertises `session/resume`.
+    pub fn agent_supports_resume_session(init_result: &serde_json::Value) -> bool {
+        init_result
+            .pointer("/agentCapabilities/sessionCapabilities/resume")
+            .is_some_and(|value| !value.is_null())
     }
 
     /// Returns true when an initialize result advertises `session/fork`.
@@ -2614,6 +2647,26 @@ mod tests {
     }
 
     #[test]
+    fn resume_capability_requires_advertised_session_resume() {
+        let supported = serde_json::json!({
+            "agentCapabilities": {
+                "sessionCapabilities": {
+                    "resume": {}
+                }
+            }
+        });
+        let absent = serde_json::json!({
+            "agentCapabilities": {
+                "loadSession": true,
+                "sessionCapabilities": {}
+            }
+        });
+
+        assert!(AcpClient::agent_supports_resume_session(&supported));
+        assert!(!AcpClient::agent_supports_resume_session(&absent));
+    }
+
+    #[test]
     fn image_capability_requires_explicit_true() {
         let supported = serde_json::json!({
             "agentCapabilities": {
@@ -3677,6 +3730,35 @@ mod tests {
         assert!(
             observed_reads.iter().any(|payload| payload["id"] == 0),
             "the session/load response itself must remain observable"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_resume_avoids_history_replay_and_preserves_the_session_id() {
+        let script = r#"
+            read -t 2 _resume
+            echo '{"jsonrpc":"2.0","id":0,"result":{"models":{"availableModels":[],"currentModelId":"gpt-test"}}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        let observer = crate::observer::ObserverHandle::in_process();
+        client.set_observer(Some(observer.clone()), 0);
+
+        let resumed = client
+            .session_resume_full("/workspace", "sess-existing", Vec::new())
+            .await
+            .expect("session/resume should succeed");
+
+        assert_eq!(resumed.session_id, "sess-existing");
+        assert!(!resumed.loaded_buzz_standing_context);
+        let resume_request = observer
+            .snapshot()
+            .into_iter()
+            .find(|event| event.kind == "acp_write" && event.payload["method"] == "session/resume")
+            .expect("session/resume request should be observable");
+        assert_eq!(
+            resume_request.payload["params"]["sessionId"],
+            "sess-existing"
         );
     }
 

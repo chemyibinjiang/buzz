@@ -268,3 +268,11 @@
 - 处理：本地 Codex task 在任何 harness spawn 前都重新检查 Codex Desktop 进程树；发现私有 backend 时立即拒绝，并引导用户通过显式确认的 Take over 流程重连。SSH task 不检查本机 Desktop，独立 Codex CLI、Scientist Connector 和其他未验证进程也不会被误杀。
 - 验证：Codex Desktop 进程分类与 takeover 聚焦测试 12/12、错误呈现测试 36/36、Desktop TypeScript typecheck 与 Biome 检查通过；本次修改文件单独通过 rustfmt 检查。全仓库 fmt 仍报告 `Lin/develop` 基线中的既有格式差异，本次未改动这些文件。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Desktop 正在工作的 Codex task 被误报为 60 秒加载超时
+
+- 现象：`数据复写管家` 在 Buzz 中反复显示“60 秒内未加载”，点击 Retry 仍然失败。
+- 定位：task `01a07496-5d2b-7493-b631-6af817f0e0ce` 同时在 Codex Desktop 中处于 active 状态，Desktop backend 正常持有 writer lock；harness 实际约 1 秒内收到 adapter 包装后的 `-32603 Internal error`，并未等待 60 秒。用户运行的是未包含统一 Start 前置检查的旧 Desktop GUI，因此 Retry 仍启动了 harness；日志解析又把所有 identity-bound load 错误统一改写为 `-32004`。该 task 的 rollout 约 61.4 MB，空闲后使用 `session/load` 还会产生不必要的完整历史回放。
+- 处理：沿用统一 spawn 前置检查，在任何入口发现 Codex Desktop 私有 backend 时直接显示 Busy/Take over，不启动 harness；日志解析保留嵌入的 Agent 错误码，仅在错误文本确实包含 timeout 时标记 `-32004`。对声明 `sessionCapabilities.resume` 的 adapter，identity-bound task 改用 `session/resume`，恢复 Codex 上下文但不经 ACP 回放完整历史；旧 adapter 继续回退 `session/load`。
+- 验证：现场确认 task 在 Codex Desktop 中为 active，51919 shared runtime 健康且当前 lock 与 Desktop 占用一致；resume capability/request、Desktop 日志错误解析及 Codex 聚焦测试通过。完整 Busy UI 需安装含 Desktop 前置检查的新构建后复测，空闲 task 的真实 resume 仍待验收。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
