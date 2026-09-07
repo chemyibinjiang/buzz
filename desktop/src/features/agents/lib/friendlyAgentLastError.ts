@@ -54,6 +54,9 @@ export const CODEX_TASK_FRAME_TOO_LARGE_COPY =
 export const CODEX_WRITER_CONFLICT_COPY =
   "This Codex task is open in a separate Codex Desktop runtime. Open Codex shared runtime settings, take over Desktop, then retry the agent.";
 
+export const CODEX_HISTORY_PROJECTION_STALLED_COPY =
+  "This Codex task's local history index is stalled after an interrupted Codex restart. The original conversation is still on disk. Repair the Codex history index, reopen Codex Desktop, then retry the agent.";
+
 export const AGENT_IDENTITY_MISSING_COPY =
   "Buzz no longer has this agent's local identity key. Its Codex task and workspace are intact. Add the same Codex task again to replace the Buzz identity.";
 
@@ -109,6 +112,17 @@ export function friendlyAgentLastError(
   // before the unknown-code pass-through so automatic retries can stop.
   if (isCodexWriterConflictError(trimmed)) {
     return { severity: "generic", copy: CODEX_WRITER_CONFLICT_COPY };
+  }
+
+  if (
+    trimmed
+      .toLocaleLowerCase()
+      .includes("codex task history projection is stalled")
+  ) {
+    return {
+      severity: "generic",
+      copy: CODEX_HISTORY_PROJECTION_STALLED_COPY,
+    };
   }
 
   if (isAgentIdentityMissingError(trimmed)) {

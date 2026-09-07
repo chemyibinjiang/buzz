@@ -6,6 +6,7 @@ import {
   AGENT_KEYRING_UNAVAILABLE_COPY,
   CODEX_TASK_FRAME_TOO_LARGE_COPY,
   CODEX_TASK_LOAD_FAILED_COPY,
+  CODEX_HISTORY_PROJECTION_STALLED_COPY,
   CODEX_WRITER_CONFLICT_COPY,
   friendlyAgentLastError,
   friendlyTurnErrorCopy,
@@ -41,6 +42,18 @@ test("maps Codex task load timeouts to actionable retry guidance", () => {
     {
       severity: "generic",
       copy: CODEX_TASK_LOAD_FAILED_COPY,
+    },
+  );
+});
+
+test("explains a stalled Codex history projection without claiming data loss", () => {
+  assert.deepEqual(
+    friendlyAgentLastError(
+      "Codex task history projection is stalled: expected ordinal 3623, got 3622",
+    ),
+    {
+      severity: "generic",
+      copy: CODEX_HISTORY_PROJECTION_STALLED_COPY,
     },
   );
 });

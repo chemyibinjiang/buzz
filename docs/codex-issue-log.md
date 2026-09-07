@@ -221,3 +221,11 @@
 - 处理：Windows 进程分类同时识别已验证 Desktop 进程树中的 `codex.exe app-server` 后代，并保留旧 Appx backend 路径匹配；监听 shared URL 的 backend 继续排除，独立 CLI app-server 也不会因路径相似被误判。这样 Start/Restart 会在创建 Agent worker 前触发现有接管确认。
 - 验证：Tauri `codex_desktop` 定向测试 11/11 通过，覆盖 LocalAppData Desktop 子进程、旧 Appx backend、shared listener 与无关 CLI backend。随后构建并在 Xiaoxin 安装 `0.5.18-local.1`：新版准确显示 1 个私有 app-server，Connect 前弹出 `Close and reconnect`，且确认前没有启动 `buzz-acp`；确认后旧私有 PID 消失，Codex Desktop 重开并复用原 shared PID `2596`。临时 Agent 经 DM 返回精确文本 `BUZZ_LOCK_LIVE_OK`，日志记录 5 秒后 lazy worker 回收且没有 writer conflict；Disconnect 后 harness 退出，Desktop 与 shared runtime 保持运行。
 - 版本/提交：PR 分支 `codex/detect-versioned-codex-desktop`；Xiaoxin 验收安装包基于原始测试提交 `9760ec38`，版本 `0.5.18-local.1_9760ec382776`。
+
+## 2026-09-07：Codex 重启后队列失效并隐藏后续 task 历史
+
+- 现象：Codex app-server 报告 queue 失效；退出并重开 Desktop 后，task `01a07496-5d2b-7493-b631-6af817f0e0ce` 只能显示较早的历史，后续对话看似丢失。
+- 定位：canonical rollout JSONL 仍有 12,367 行且仅有一处非递增序号：`token_count` 和重启后的 `thread_settings_applied` 连续使用 ordinal `3622`。`thread_history_1.sqlite` 已消费第一条并期望 `3623`，却在保存的 byte offset 读到第二个 `3622`，因此拒绝投影其后的所有消息。故障期间只有 Codex Desktop 进程写入该 task，没有 Buzz shared runtime 并发写入；这是 Codex Windows interrupted-resume 的已知上游缺陷，而非 Buzz relay、认证或 task writer 冲突。
+- 处理：Buzz 在启动本地 Codex task Agent 前只读检查分页历史游标对应的 JSONL 行；确认 ordinal 倒退时立即停止加载，并明确说明原始对话仍在磁盘、需要修复派生历史索引，避免继续等待 60 秒或把故障误报成 app-server 无响应。数据库不可用、旧版无分页表及 SSH task 均保持 fail-open。
+- 验证：真实现场确认投影游标为 byte offset `17557614`、expected ordinal `3623`，该位置实际为第二个 ordinal `3622`；完整 JSONL 扫描确认除此之外序号严格递增。新增 Rust stalled/healthy 游标测试 2/2 通过，前端错误映射测试 37/37 通过。当前 task 的无损恢复需在 Codex 完全退出后将该投影游标回退至 `3622`，重开后由 Codex 从 canonical rollout 追平派生索引。
+- 版本/提交：分支 `codex/detect-codex-history-stall`，待提交。

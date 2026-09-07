@@ -10,6 +10,7 @@ use std::{
     time::SystemTime,
 };
 
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -27,6 +28,8 @@ const MAX_HISTORY_MESSAGES: usize = 200;
 const MAX_HISTORY_MESSAGE_CHARS: usize = 20_000;
 pub const DEFAULT_CODEX_SHARED_APP_SERVER_URL: &str = "ws://127.0.0.1:51919";
 const SHARED_RUNTIME_URL_ENV: &str = "BUZZ_CODEX_SHARED_APP_SERVER_URL";
+const CODEX_HISTORY_DB: &str = "thread_history_1.sqlite";
+const CODEX_HISTORY_STALLED_MARKER: &str = "Codex task history projection is stalled";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CodexTaskBinding {
@@ -503,6 +506,7 @@ pub fn task_binding_for_spawn(
             binding.app_server_url = Some(url.clone());
             url
         } else {
+            ensure_codex_task_history_projection_healthy(&binding.task_id)?;
             binding.app_server_url.clone().ok_or_else(|| {
                 "This Codex task binding predates shared runtime setup. Reopen Buzz to migrate it."
                     .to_string()
@@ -511,6 +515,63 @@ pub fn task_binding_for_spawn(
         ensure_codex_shared_runtime_reachable(&url)?;
     }
     Ok(binding)
+}
+
+fn ensure_codex_task_history_projection_healthy(task_id: &str) -> Result<(), String> {
+    let codex_home = codex_home_dir()?;
+    let mut locations = HashMap::new();
+    collect_session_locations(&codex_home.join("sessions"), false, &mut locations);
+    collect_session_locations(&codex_home.join("archived_sessions"), true, &mut locations);
+    let Some(location) = locations.get(task_id) else {
+        return Ok(());
+    };
+
+    let Some((expected, actual)) = detect_stalled_history_projection(
+        &codex_home.join(CODEX_HISTORY_DB),
+        &location.path,
+        task_id,
+    ) else {
+        return Ok(());
+    };
+
+    Err(format!(
+        "{CODEX_HISTORY_STALLED_MARKER}: expected ordinal {expected}, got {actual}. The original Codex rollout is intact, but its derived history index must be repaired before Buzz can load this task."
+    ))
+}
+
+fn detect_stalled_history_projection(
+    history_db: &Path,
+    rollout_path: &Path,
+    task_id: &str,
+) -> Option<(i64, i64)> {
+    if !history_db.is_file() || !rollout_path.is_file() {
+        return None;
+    }
+    let connection = Connection::open_with_flags(
+        history_db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let (offset, expected): (i64, i64) = connection
+        .query_row(
+            "SELECT next_rollout_byte_offset, next_rollout_ordinal \
+             FROM thread_history_projection_state WHERE thread_id = ?1",
+            [task_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .ok()??;
+    let offset = u64::try_from(offset).ok()?;
+
+    let mut file = File::open(rollout_path).ok()?;
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let mut line = String::new();
+    BufReader::new(file).read_line(&mut line).ok()?;
+    let actual = serde_json::from_str::<serde_json::Value>(&line)
+        .ok()?
+        .get("ordinal")?
+        .as_i64()?;
+    (actual < expected).then_some((expected, actual))
 }
 
 pub fn configure_task_bound_command(
@@ -928,6 +989,59 @@ mod tests {
     use super::*;
     use std::fs::OpenOptions;
     use std::io::Write as _;
+
+    fn history_projection_fixture(next_line_ordinal: i64) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let history_db = dir.path().join(CODEX_HISTORY_DB);
+        let rollout_path = dir.path().join("rollout.jsonl");
+        let first = r#"{"ordinal":3622,"type":"event_msg","payload":{"type":"token_count"}}"#;
+        let second = format!(
+            r#"{{"ordinal":{next_line_ordinal},"type":"event_msg","payload":{{"type":"thread_settings_applied"}}}}"#
+        );
+        fs::write(&rollout_path, format!("{first}\n{second}\n")).unwrap();
+
+        let connection = Connection::open(&history_db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE thread_history_projection_state (\
+                    thread_id TEXT PRIMARY KEY,\
+                    next_rollout_byte_offset INTEGER NOT NULL,\
+                    next_rollout_ordinal INTEGER NOT NULL\
+                );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO thread_history_projection_state \
+                 (thread_id, next_rollout_byte_offset, next_rollout_ordinal) \
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params!["task-id", first.len() + 1, 3623],
+            )
+            .unwrap();
+        drop(connection);
+
+        (dir, history_db, rollout_path)
+    }
+
+    #[test]
+    fn detects_duplicate_ordinal_at_codex_history_projection_cursor() {
+        let (_dir, history_db, rollout_path) = history_projection_fixture(3622);
+
+        assert_eq!(
+            detect_stalled_history_projection(&history_db, &rollout_path, "task-id"),
+            Some((3623, 3622))
+        );
+    }
+
+    #[test]
+    fn accepts_matching_ordinal_at_codex_history_projection_cursor() {
+        let (_dir, history_db, rollout_path) = history_projection_fixture(3623);
+
+        assert_eq!(
+            detect_stalled_history_projection(&history_db, &rollout_path, "task-id"),
+            None
+        );
+    }
 
     #[test]
     fn reads_codex_session_metadata() {
