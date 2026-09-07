@@ -197,7 +197,7 @@ export function AgentsView() {
                     variant="outline"
                   >
                     <MonitorUp />
-                    {isOpeningCodex ? "Opening..." : "Open Codex Desktop"}
+                    {isOpeningCodex ? "Starting..." : "Start Codex Desktop"}
                   </Button>
                   <Button
                     data-testid="agent-defaults-button"
@@ -250,7 +250,7 @@ export function AgentsView() {
                       onSelect={() => void openCodexDesktop()}
                     >
                       <MonitorUp />
-                      {isOpeningCodex ? "Opening..." : "Open Codex Desktop"}
+                      {isOpeningCodex ? "Starting..." : "Start Codex Desktop"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => {

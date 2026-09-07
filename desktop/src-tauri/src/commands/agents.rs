@@ -624,7 +624,7 @@ pub async fn create_managed_agent(
     let codex_task_binding = if input.codex_ssh_host.is_some() {
         prepare_remote_codex_task_binding(&input)?
     } else {
-        prepare_codex_task_binding(&input)?
+        prepare_codex_task_binding(&app, &input)?
     };
     if let Some(parallelism) = input.parallelism {
         if !(1..=32).contains(&parallelism) {

@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fs,
     io::{Read, Seek, SeekFrom, Write},
+    net::{TcpListener, ToSocketAddrs},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::OnceLock,
@@ -19,10 +20,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::codex_tasks::codex_shared_app_server_url;
+use super::codex_tasks::current_codex_shared_app_server_url;
 use super::{atomic_write_json_restricted, managed_agents_base_dir};
 
-const SHARED_RUNTIME_CONFIG_VERSION: u32 = 1;
+const SHARED_RUNTIME_CONFIG_VERSION: u32 = 2;
+const SHARED_RUNTIME_FALLBACK_PORTS: u16 = 32;
 const SHARED_RUNTIME_COMMAND_ENV: &str = "BUZZ_CODEX_APP_SERVER_COMMAND";
 const SHARED_RUNTIME_ERROR_TAIL_BYTES: u64 = 4096;
 const CODEX_CODE_MODE_HOST_FLAG: &str = "features.code_mode_host=true";
@@ -52,6 +54,8 @@ fn detach_shared_runtime(child: Child) -> u32 {
 struct CodexSharedRuntimeConfig {
     version: u32,
     enabled: bool,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 impl Default for CodexSharedRuntimeConfig {
@@ -59,6 +63,7 @@ impl Default for CodexSharedRuntimeConfig {
         Self {
             version: SHARED_RUNTIME_CONFIG_VERSION,
             enabled: false,
+            url: None,
         }
     }
 }
@@ -173,6 +178,53 @@ fn save_shared_runtime_config(
     let payload = serde_json::to_vec_pretty(config)
         .map_err(|error| format!("failed to serialize Codex shared runtime: {error}"))?;
     atomic_write_json_restricted(&path, &payload)
+}
+
+pub(super) fn persisted_shared_runtime_url(app: &AppHandle) -> Result<Option<String>, String> {
+    Ok(load_shared_runtime_config(app)?.url)
+}
+
+fn shared_runtime_start_candidates(preferred_url: &str) -> Vec<String> {
+    let mut candidates = vec![preferred_url.to_string()];
+    let Ok(mut parsed) = url::Url::parse(preferred_url) else {
+        return candidates;
+    };
+    let is_loopback = parsed.scheme() == "ws"
+        && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "::1"));
+    let Some(preferred_port) = parsed.port() else {
+        return candidates;
+    };
+    if !is_loopback {
+        return candidates;
+    }
+
+    for offset in 1..SHARED_RUNTIME_FALLBACK_PORTS {
+        let Some(port) = preferred_port.checked_add(offset) else {
+            break;
+        };
+        if parsed.set_port(Some(port)).is_ok() {
+            candidates.push(parsed.to_string().trim_end_matches('/').to_string());
+        }
+    }
+    candidates
+}
+
+fn local_runtime_port_available(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let Some(port) = parsed.port() else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let Ok(addresses) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    addresses
+        .into_iter()
+        .all(|address| TcpListener::bind(address).is_ok())
 }
 
 fn normalize_windows_executable_path(path: &str) -> String {
@@ -521,7 +573,7 @@ pub async fn codex_shared_runtime_status(
     app: &AppHandle,
 ) -> Result<CodexSharedRuntimeStatus, String> {
     let config = load_shared_runtime_config(app)?;
-    let url = codex_shared_app_server_url()?;
+    let url = current_codex_shared_app_server_url(app)?;
     if !config.enabled {
         return Ok(attach_desktop_process_status(CodexSharedRuntimeStatus {
             enabled: false,
@@ -1024,46 +1076,88 @@ pub async fn enable_codex_shared_runtime(
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
-    save_shared_runtime_config(
-        app,
-        &CodexSharedRuntimeConfig {
-            version: SHARED_RUNTIME_CONFIG_VERSION,
+    let preferred_url = current_codex_shared_app_server_url(app)?;
+    let mut config = CodexSharedRuntimeConfig {
+        version: SHARED_RUNTIME_CONFIG_VERSION,
+        enabled: true,
+        url: Some(preferred_url.clone()),
+    };
+    save_shared_runtime_config(app, &config)?;
+
+    let mut last_error = match probe_codex_shared_runtime(&preferred_url).await {
+        Ok(()) => None,
+        Err(error) => Some(error),
+    };
+    if last_error.is_none() {
+        return Ok(attach_desktop_process_status(CodexSharedRuntimeStatus {
             enabled: true,
-        },
-    )?;
-    let url = codex_shared_app_server_url()?;
-    if probe_codex_shared_runtime(&url).await.is_err() {
-        let spawned_pid = spawn_codex_shared_runtime(app, &url)?;
-        let mut last_error = None;
-        for _ in 0..50 {
-            match probe_codex_shared_runtime(&url).await {
-                Ok(()) => {
-                    last_error = None;
-                    break;
-                }
-                Err(error) => last_error = Some(error),
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        if let Some(error) = last_error {
-            let _ = super::terminate_process(spawned_pid);
+            state: CodexSharedRuntimeState::Ready,
+            url: preferred_url,
+            detail: None,
+            desktop_process_ids: Vec::new(),
+            private_app_server_process_ids: Vec::new(),
+            desktop_detection_error: None,
+        })
+        .await);
+    }
+
+    for url in shared_runtime_start_candidates(&preferred_url) {
+        if url != preferred_url && probe_codex_shared_runtime(&url).await.is_ok() {
+            config.url = Some(url.clone());
+            save_shared_runtime_config(app, &config)?;
             return Ok(attach_desktop_process_status(CodexSharedRuntimeStatus {
                 enabled: true,
-                state: CodexSharedRuntimeState::Unavailable,
+                state: CodexSharedRuntimeState::Ready,
                 url,
-                detail: Some(shared_runtime_failure_detail(app, error)),
+                detail: None,
                 desktop_process_ids: Vec::new(),
                 private_app_server_process_ids: Vec::new(),
                 desktop_detection_error: None,
             })
             .await);
         }
+        if !local_runtime_port_available(&url) {
+            last_error = Some(format!("{url} is already in use by another process"));
+            continue;
+        }
+
+        let spawned_pid = spawn_codex_shared_runtime(app, &url)?;
+        let mut attempt_error = None;
+        for _ in 0..50 {
+            match probe_codex_shared_runtime(&url).await {
+                Ok(()) => {
+                    attempt_error = None;
+                    break;
+                }
+                Err(error) => attempt_error = Some(error),
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        if let Some(error) = attempt_error {
+            let _ = super::terminate_process(spawned_pid);
+            last_error = Some(error);
+            continue;
+        }
+
+        config.url = Some(url.clone());
+        save_shared_runtime_config(app, &config)?;
+        return Ok(attach_desktop_process_status(CodexSharedRuntimeStatus {
+            enabled: true,
+            state: CodexSharedRuntimeState::Ready,
+            url,
+            detail: None,
+            desktop_process_ids: Vec::new(),
+            private_app_server_process_ids: Vec::new(),
+            desktop_detection_error: None,
+        })
+        .await);
     }
+
     Ok(attach_desktop_process_status(CodexSharedRuntimeStatus {
         enabled: true,
-        state: CodexSharedRuntimeState::Ready,
-        url,
-        detail: None,
+        state: CodexSharedRuntimeState::Unavailable,
+        url: preferred_url,
+        detail: last_error.map(|error| shared_runtime_failure_detail(app, error)),
         desktop_process_ids: Vec::new(),
         private_app_server_process_ids: Vec::new(),
         desktop_detection_error: None,
@@ -1177,15 +1271,15 @@ fn terminate_verified_windows_process(
 }
 
 #[cfg(windows)]
-pub fn launch_codex_desktop_shared() -> Result<(), String> {
-    let url = codex_shared_app_server_url()?;
+pub fn launch_codex_desktop_shared(app: &AppHandle) -> Result<(), String> {
+    let url = current_codex_shared_app_server_url(app)?;
     let snapshot = snapshot_codex_desktop_processes(&url)?;
     ensure_ordinary_desktop_launch_allowed(&snapshot)?;
     launch_codex_desktop_shared_unchecked(&url).map(|_| ())
 }
 
 #[cfg(not(windows))]
-pub fn launch_codex_desktop_shared() -> Result<(), String> {
+pub fn launch_codex_desktop_shared(_app: &AppHandle) -> Result<(), String> {
     Err("Automatic Codex Desktop relaunch is currently available on Windows only.".to_string())
 }
 
@@ -1207,7 +1301,7 @@ pub async fn take_over_codex_desktop_shared(
 
     #[cfg(windows)]
     {
-        let url = codex_shared_app_server_url()?;
+        let url = current_codex_shared_app_server_url(app)?;
         probe_codex_shared_runtime(&url).await.map_err(|error| {
             format!(
                 "The shared Codex runtime is not ready at {url}: {error}. Start it before taking over Desktop."
@@ -1449,6 +1543,48 @@ mod tests {
                 DEFAULT_CODEX_SHARED_APP_SERVER_URL,
             ]
         );
+    }
+
+    #[test]
+    fn old_shared_runtime_config_defaults_to_the_preferred_url() {
+        let config: CodexSharedRuntimeConfig =
+            serde_json::from_str(r#"{"version":1,"enabled":true}"#).unwrap();
+
+        assert!(config.enabled);
+        assert_eq!(config.url, None);
+    }
+
+    #[test]
+    fn shared_runtime_candidates_advance_from_the_preferred_loopback_port() {
+        let candidates = shared_runtime_start_candidates(DEFAULT_CODEX_SHARED_APP_SERVER_URL);
+
+        assert_eq!(candidates.len(), usize::from(SHARED_RUNTIME_FALLBACK_PORTS));
+        assert_eq!(candidates[0], "ws://127.0.0.1:51919");
+        assert_eq!(candidates[1], "ws://127.0.0.1:51920");
+        assert_eq!(candidates.last().unwrap(), "ws://127.0.0.1:51950");
+    }
+
+    #[test]
+    fn shared_runtime_does_not_change_remote_or_secure_urls() {
+        assert_eq!(
+            shared_runtime_start_candidates("wss://codex.example.test"),
+            vec!["wss://codex.example.test"]
+        );
+        assert_eq!(
+            shared_runtime_start_candidates("ws://10.0.0.8:51919"),
+            vec!["ws://10.0.0.8:51919"]
+        );
+    }
+
+    #[test]
+    fn occupied_loopback_port_is_not_available_for_the_shared_runtime() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("ws://127.0.0.1:{port}");
+
+        assert!(!local_runtime_port_available(&url));
+        drop(listener);
+        assert!(local_runtime_port_available(&url));
     }
 
     #[cfg(target_os = "macos")]

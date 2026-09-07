@@ -276,3 +276,19 @@
 - 处理：沿用统一 spawn 前置检查，在任何入口发现 Codex Desktop 私有 backend 时直接显示 Busy/Take over，不启动 harness；日志解析保留嵌入的 Agent 错误码，仅在错误文本确实包含 timeout 时标记 `-32004`。对声明 `sessionCapabilities.resume` 的 adapter，identity-bound task 改用 `session/resume`，恢复 Codex 上下文但不经 ACP 回放完整历史；旧 adapter 继续回退 `session/load`。
 - 验证：现场确认 task 在 Codex Desktop 中为 active，51919 shared runtime 健康且当前 lock 与 Desktop 占用一致；resume capability/request、Desktop 日志错误解析及 Codex 聚焦测试通过。完整 Busy UI 需安装含 Desktop 前置检查的新构建后复测，空闲 task 的真实 resume 仍待验收。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：从 Buzz 显式启动 Codex Desktop 并收敛 app-server
+
+- 现象：用户需要从 Buzz 启动 Codex，并确保 Codex Desktop 不再保留与 51919 shared runtime 竞争的私有 app-server；原入口名为 `Open Codex Desktop`，冲突处理藏在 runtime 面板的 `Take over` 中，意图不清晰。
+- 定位：backend 已具备安全接管流程：只终止经包身份、父子进程树和 executable path 验证的 Codex Desktop 及其私有 backend，保留 shared app-server，并以 `CODEX_APP_SERVER_WS_URL` 重开 Desktop。独立 Codex CLI、SSH runtime 与 Scientist Connector 不属于目标集合。
+- 处理：Agents 页和 runtime 面板统一使用 `Start Codex Desktop`。检测到冲突时显示明确确认框，说明会中断 active turn/未保存草稿，并将操作命名为 `Close conflicts and start`；确认后复用现有安全接管流程。
+- 验证：runtime panel 聚焦测试、Desktop typecheck 与 Biome 检查通过；进程终止边界由既有 Codex Desktop 分类和 takeover Rust 测试覆盖。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Codex shared runtime 固定端口冲突
+
+- 现象：`CODEX_APP_SERVER_WS_URL` 固定指向 `ws://127.0.0.1:51919`；若该端口被非共享服务占用，Buzz 无法启动 shared runtime，Desktop 与 task Agent 也没有共同迁移到其他端口的机制。
+- 定位：shared runtime 配置只持久化 `enabled`，状态探测、Desktop 启动和本地 task binding 分别从默认值或旧绑定读取 URL。直接在启动器里换端口会让多个消费者指向不同 backend。
+- 处理：将 `51919` 保留为首选端口，并在版本化配置中持久化实际 URL。健康的已配置 runtime 会直接复用；首选端口被无关进程占用时，仅在 loopback 上顺延探测 `51920..51950`，绝不终止占用者。成功启动后原子保存地址；状态面板、Desktop 启动/接管和每次本地 Agent spawn 均读取该地址，旧 task binding 自动刷新。SSH 和显式远程 URL 不参与本地端口改写。
+- 验证：Tauri 编译通过；Codex Desktop 聚焦测试 16/16、shared-runtime 默认解析测试 1/1、runtime panel 测试 2/2 通过，Desktop TypeScript typecheck 与 Biome 检查通过。新增用例覆盖旧配置兼容、候选端口范围、远程 URL 不改写和真实 loopback 端口占用；现场现有 51919 shared runtime 保持原 PID 且 readiness 为 HTTP 200。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。

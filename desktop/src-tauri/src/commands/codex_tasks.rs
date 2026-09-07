@@ -38,8 +38,8 @@ pub async fn enable_codex_shared_runtime(
 }
 
 #[tauri::command]
-pub async fn launch_codex_desktop_shared() -> Result<(), String> {
-    tokio::task::spawn_blocking(crate::managed_agents::launch_codex_desktop_shared)
+pub async fn launch_codex_desktop_shared(app: AppHandle) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::managed_agents::launch_codex_desktop_shared(&app))
         .await
         .map_err(|error| format!("spawn_blocking failed: {error}"))?
 }

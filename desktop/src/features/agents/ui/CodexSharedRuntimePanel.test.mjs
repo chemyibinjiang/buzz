@@ -117,11 +117,12 @@ test("conflict takeover requires confirmation and refreshes status", async (t) =
 
   await screen.findByText("Codex Desktop runtime conflict");
   const takeover = screen.getByRole("button", {
-    name: "Take over Codex Desktop",
+    name: "Start Codex Desktop",
   });
   fireEvent.click(takeover);
   assert.match(
-    screen.getByText(/Closing it may stop active turns/).textContent,
+    screen.getByText(/Active turns and unsaved composer drafts may be lost/)
+      .textContent,
     /ws:\/\/127\.0\.0\.1:51919/,
   );
 
@@ -129,7 +130,9 @@ test("conflict takeover requires confirmation and refreshes status", async (t) =
   assert.equal(takeoverCalls, 0);
 
   fireEvent.click(takeover);
-  fireEvent.click(screen.getByRole("button", { name: "Close and reconnect" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Close conflicts and start" }),
+  );
   await waitFor(() => assert.equal(takeoverCalls, 1));
   await screen.findByText("Codex shared runtime connected");
   assert.equal(screen.queryByText("Codex Desktop runtime conflict"), null);
