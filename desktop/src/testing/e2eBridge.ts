@@ -12027,6 +12027,18 @@ export function maybeInstallE2eTauriMocks() {
         return getRelayHttpUrl(activeConfig);
       case "relay_requires_membership":
         return activeConfig?.mock?.relayRequiresMembership ?? false;
+      case "get_codex_shared_runtime_status":
+        return {
+          enabled: true,
+          state: "ready",
+          url: "ws://127.0.0.1:51919",
+          detail: null,
+          desktop_process_ids: [],
+          private_app_server_process_ids: [],
+          desktop_detection_error: null,
+        };
+      case "launch_codex_desktop_shared":
+        return null;
       case "discover_acp_providers":
         return handleDiscoverAcpRuntimes(activeConfig);
       case "save_custom_harness":

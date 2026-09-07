@@ -51,18 +51,6 @@ export type WelcomeTeamAgents = [ManagedAgent, ManagedAgent, ManagedAgent];
 
 const welcomeTeamPromises = new Map<string, Promise<WelcomeTeamAgents>>();
 
-function normalizeRelayUrl(relayUrl: string | null | undefined) {
-  return relayUrl?.trim().replace(/\/+$/, "") ?? null;
-}
-
-function isAgentScopedToRelay(agent: ManagedAgent, relayUrl?: string | null) {
-  const targetRelayUrl = normalizeRelayUrl(relayUrl);
-  if (!targetRelayUrl) {
-    return true;
-  }
-  return normalizeRelayUrl(agent.relayUrl) === targetRelayUrl;
-}
-
 function isBuiltInWelcomeGuideAgent(agent: ManagedAgent) {
   return agent.personaId === WELCOME_GUIDE_PERSONA_ID;
 }
@@ -96,34 +84,28 @@ export function pickWelcomeGuideAgent(agents: ManagedAgent[]) {
 
 export function pickWelcomeGuideAgentForRelay(
   agents: ManagedAgent[],
-  relayUrl?: string | null,
+  _relayUrl?: string | null,
 ) {
-  return pickAgentByStatus(
-    agents.filter(
-      (agent) =>
-        isWelcomeGuideAgent(agent) && isAgentScopedToRelay(agent, relayUrl),
-    ),
-  );
+  return pickWelcomeGuideAgent(agents);
 }
 
-/** Find the preferred managed instance for one starter persona and relay. */
+/** Find the preferred managed instance for one starter persona. */
 export function pickWelcomeTeamStarterAgentForRelay(
   agents: ManagedAgent[],
   starter: WelcomeTeamStarterDefinition,
-  relayUrl?: string | null,
+  _relayUrl?: string | null,
 ) {
   return pickAgentByStatus(
     agents.filter(
       (agent) =>
         agent.teamId === WELCOME_TEAM_ID &&
-        agent.personaId === starter.personaId &&
-        isAgentScopedToRelay(agent, relayUrl),
+        agent.personaId === starter.personaId,
     ),
   );
 }
 
-/** Pubkeys belonging to any managed Welcome Team persona on this relay. */
-export async function getWelcomeTeamAgentPubkeys(relayUrl?: string | null) {
+/** Pubkeys belonging to any managed Welcome Team persona. */
+export async function getWelcomeTeamAgentPubkeys(_relayUrl?: string | null) {
   const personaIds = new Set<string>(
     WELCOME_TEAM_STARTERS.map(({ personaId }) => personaId),
   );
@@ -132,19 +114,15 @@ export async function getWelcomeTeamAgentPubkeys(relayUrl?: string | null) {
       (agent) =>
         agent.teamId === WELCOME_TEAM_ID &&
         agent.personaId !== null &&
-        personaIds.has(agent.personaId) &&
-        isAgentScopedToRelay(agent, relayUrl),
+        personaIds.has(agent.personaId),
     )
     .map((agent) => agent.pubkey);
 }
 
 /** Legacy Fizz/Kit lookup retained for existing channel reuse checks. */
-export async function getWelcomeGuideAgentPubkeys(relayUrl?: string | null) {
+export async function getWelcomeGuideAgentPubkeys(_relayUrl?: string | null) {
   return (await listManagedAgents())
-    .filter(
-      (agent) =>
-        isWelcomeGuideAgent(agent) && isAgentScopedToRelay(agent, relayUrl),
-    )
+    .filter(isWelcomeGuideAgent)
     .map((agent) => agent.pubkey);
 }
 
@@ -396,7 +374,7 @@ export function ensureWelcomeTeam(
   channelId: string,
   relayUrl?: string | null,
 ): Promise<WelcomeTeamAgents> {
-  const key = `${normalizeRelayUrl(relayUrl) ?? ""}:${channelId}`;
+  const key = `${relayUrl?.trim().replace(/\/+$/, "") ?? ""}:${channelId}`;
   const current = welcomeTeamPromises.get(key);
   if (current) return current;
 

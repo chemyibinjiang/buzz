@@ -1,5 +1,11 @@
 import * as React from "react";
-import { EllipsisVertical, Link2, OctagonX, Settings2 } from "lucide-react";
+import {
+  EllipsisVertical,
+  Link2,
+  MonitorCog,
+  OctagonX,
+  Settings2,
+} from "lucide-react";
 import {
   consumePendingSnapshotImport,
   subscribeSnapshotImport,
@@ -9,6 +15,7 @@ import { AddTeamToChannelDialog } from "./AddTeamToChannelDialog";
 import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentDialog } from "./AgentDialog";
 import { CodexTaskAgentDialog } from "./CodexTaskAgentDialog";
+import { CodexSharedRuntimeDialog } from "./CodexSharedRuntimeDialog";
 import { PersonaCatalogDialog } from "./PersonaCatalogDialog";
 import { PersonaDeleteDialog } from "./PersonaDeleteDialog";
 import { PersonaShareDialog } from "./PersonaShareDialog";
@@ -51,6 +58,7 @@ export function AgentsView() {
   const compactActionsTriggerRef = React.useRef<HTMLButtonElement>(null);
   const [isAiDefaultsOpen, setIsAiDefaultsOpen] = React.useState(false);
   const [isCodexTaskOpen, setIsCodexTaskOpen] = React.useState(false);
+  const [isCodexRuntimeOpen, setIsCodexRuntimeOpen] = React.useState(false);
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -148,6 +156,15 @@ export function AgentsView() {
                     Add Codex task
                   </Button>
                   <Button
+                    data-testid="codex-runtime-button"
+                    onClick={() => setIsCodexRuntimeOpen(true)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <MonitorCog />
+                    Codex runtime
+                  </Button>
+                  <Button
                     data-testid="agent-defaults-button"
                     ref={fullAiDefaultsTriggerRef}
                     onClick={(event) => openAiDefaults(event.currentTarget)}
@@ -192,6 +209,12 @@ export function AgentsView() {
                     <DropdownMenuItem onSelect={() => setIsCodexTaskOpen(true)}>
                       <Link2 />
                       Add Codex task
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => setIsCodexRuntimeOpen(true)}
+                    >
+                      <MonitorCog />
+                      Codex runtime
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => {
@@ -319,6 +342,11 @@ export function AgentsView() {
         onCreated={(agent) => openProfilePanel?.(agent.pubkey)}
         onOpenChange={setIsCodexTaskOpen}
         open={isCodexTaskOpen}
+      />
+
+      <CodexSharedRuntimeDialog
+        onOpenChange={setIsCodexRuntimeOpen}
+        open={isCodexRuntimeOpen}
       />
 
       {agents.agentToAddToChannel ? (

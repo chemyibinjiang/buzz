@@ -252,3 +252,11 @@
 - 处理：删除 Codex task 实例时，若最后引用的 definition id 等于被删实例 pubkey 且不属于 built-in、team 或 shared catalog，则同步删除迁移生成的 definition；普通可复用 persona 仍只停用。启动迁移另会备份 store，并清理已存在的 inactive、无引用、64 位 pubkey definition。
 - 验证：backfill 聚焦测试 9/9、删除判定测试 2/2 通过；覆盖已有幽灵清理、仍被实例引用的定义保留、普通自定义 persona 保留以及新删除流程判定。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-07：Relay 地址迁移后 Welcome Team 身份重复
+
+- 现象：Channel members 的 Agent 搜索中同时出现两套 Fizz、Honey 和 Bumble；本地记录显示它们分别创建于旧 relay 地址和新的校园网地址，具有不同公钥。
+- 定位：managed-agent 运行层已采用 agents-everywhere 语义，忽略实例创建时保存的 relay pin，始终连接当前 workspace relay；Welcome Team 初始化和 kickoff 仍按旧 `relay_url` 做严格匹配，地址迁移后误判三个内置身份不存在并重新创建。
+- 处理：Welcome Team 的查找、kickoff 和历史身份复用统一遵循 agents-everywhere 语义，不再让创建时 relay 字符串参与身份选择；Agents 页面新增 Codex runtime 入口，直接展示长期 shared app-server 的健康检查、Desktop 启动和私有 runtime 冲突接管操作。
+- 验证：Welcome Team 聚焦单测 20/20、Codex shared-runtime 面板单测、Desktop TypeScript typecheck 与 Biome 检查通过；E2E mock build 成功，并在 1280×720 下验证 Agents 页入口和 runtime dialog。独立截图助手同时改用可取消、1 秒封顶的动画等待，修复 loading spinner 卸载时的 `AbortError`。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
