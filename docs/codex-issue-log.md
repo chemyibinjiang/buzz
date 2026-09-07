@@ -300,3 +300,11 @@
 - 处理：将 `51919` 保留为首选端口，并在版本化配置中持久化实际 URL。健康的已配置 runtime 会直接复用；首选端口被无关进程占用时，仅在 loopback 上顺延探测 `51920..51950`，绝不终止占用者。成功启动后原子保存地址；状态面板、Desktop 启动/接管和每次本地 Agent spawn 均读取该地址，旧 task binding 自动刷新。SSH 和显式远程 URL 不参与本地端口改写。
 - 验证：Tauri 编译通过；Codex Desktop 聚焦测试 16/16、shared-runtime 默认解析测试 1/1、runtime panel 测试 2/2 通过，Desktop TypeScript typecheck 与 Biome 检查通过。新增用例覆盖旧配置兼容、候选端口范围、远程 URL 不改写和真实 loopback 端口占用；现场现有 51919 shared runtime 保持原 PID 且 readiness 为 HTTP 200。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-08：Codex Desktop 通过 shared app-server 恢复 task 时误报配置损坏
+
+- 现象：Codex Desktop 连接 Buzz 的 WebSocket app-server 后，打开已有 task 会提示 `ChatGPT can't load config.toml`，详情为 `invalid transport in mcp_servers.codex_app`；同一份用户配置通过 `codex mcp list`，rollout 和历史也能被只读接口正常读取。
+- 定位：Desktop 会在 `thread/start`、`thread/resume` 和 `thread/fork` 请求中发送 `mcp_servers.codex_app.enabled_tools` 等局部覆盖。其私有 stdio backend 会由 Desktop 主进程补齐带 named pipe 的完整 `codex_app` transport；外部 WebSocket backend 不经过这层补全。Buzz 原先启动裸 app-server，Codex 将局部覆盖合并后得到既无 `command` 也无 `url` 的 MCP 配置，因此把请求误判为配置文件错误。协议探针向原 51919 server 发送相同局部覆盖，稳定复现了完全一致的错误。
+- 处理：Buzz shared runtime 启动时注入一个合法、禁用的 `codex_app` stdio transport 基底。Desktop 的局部工具过滤配置可安全合并并恢复 task，同时不会让独立 Buzz backend 冒充 Desktop 的短生命周期 app-tools named pipe。
+- 验证：无基底的真实 51919 server 对局部 `codex_app` 覆盖返回 `invalid transport`；使用新启动参数的临时 51949 server 在相同覆盖下成功恢复 task `01a07496-5d2b-7493-b631-6af817f0e0ce` 的 55 个 turns。Rust 启动参数回归测试覆盖有无 Code Mode host 两条路径。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。

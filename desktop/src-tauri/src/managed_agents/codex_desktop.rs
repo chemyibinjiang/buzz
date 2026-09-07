@@ -28,6 +28,7 @@ const SHARED_RUNTIME_FALLBACK_PORTS: u16 = 32;
 const SHARED_RUNTIME_COMMAND_ENV: &str = "BUZZ_CODEX_APP_SERVER_COMMAND";
 const SHARED_RUNTIME_ERROR_TAIL_BYTES: u64 = 4096;
 const CODEX_CODE_MODE_HOST_FLAG: &str = "features.code_mode_host=true";
+const CODEX_APP_MCP_DISABLED_CONFIG: &str = r#"mcp_servers.codex_app={command="",enabled=false}"#;
 #[cfg(windows)]
 const WINDOWS_CODEX_RUNTIME_COMPANIONS: [&str; 3] = [
     "codex-code-mode-host.exe",
@@ -902,10 +903,13 @@ fn managed_codex_app_server_executable(
 }
 
 fn codex_shared_runtime_args(url: &str, code_mode_host_available: bool) -> Vec<String> {
-    let mut args = Vec::with_capacity(if code_mode_host_available { 5 } else { 3 });
+    let mut args = Vec::with_capacity(if code_mode_host_available { 7 } else { 5 });
     if code_mode_host_available {
         args.extend(["-c".to_string(), CODEX_CODE_MODE_HOST_FLAG.to_string()]);
     }
+    // Desktop's WebSocket client sends request-scoped `codex_app` tool filters
+    // without the stdio transport that its private backend injects.
+    args.extend(["-c".to_string(), CODEX_APP_MCP_DISABLED_CONFIG.to_string()]);
     args.extend([
         "app-server".to_string(),
         "--listen".to_string(),
@@ -1530,6 +1534,8 @@ mod tests {
             vec![
                 "-c",
                 CODEX_CODE_MODE_HOST_FLAG,
+                "-c",
+                CODEX_APP_MCP_DISABLED_CONFIG,
                 "app-server",
                 "--listen",
                 DEFAULT_CODEX_SHARED_APP_SERVER_URL,
@@ -1538,6 +1544,8 @@ mod tests {
         assert_eq!(
             codex_shared_runtime_args(DEFAULT_CODEX_SHARED_APP_SERVER_URL, false),
             vec![
+                "-c",
+                CODEX_APP_MCP_DISABLED_CONFIG,
                 "app-server",
                 "--listen",
                 DEFAULT_CODEX_SHARED_APP_SERVER_URL,
