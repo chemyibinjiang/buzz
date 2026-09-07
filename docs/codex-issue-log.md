@@ -14,6 +14,14 @@
 - 版本/提交：
 ```
 
+## 2026-09-07：同步远端修改并发布 Buzz Codex Lab 0.5.19
+
+- 现象：需要拉取 `Lin/develop` 的最新远端修改，并发布正式版本 `0.5.19`。
+- 定位：远端新增动态 Codex runtime 端口、长 task 恢复、shared runtime 连接门禁、孤立 task Agent 定义清理、欢迎 Agent 跨 Relay 复用及相关 UI/迁移修复；本地工作区在同步前干净。
+- 处理：快进同步到 `4f329130`，更新桌面版本源和应用内/仓库 changelog，使用本地 updater key 与 DPAPI 密码生成签名 Windows 安装包并更新正式 Release 与 updater manifest。
+- 验证：待完成版本相关测试、Tauri 构建、updater 签名验证及 GitHub Release 资产回读。
+- 版本/提交：`0.5.19` / 待提交。
+
 ## 2026-09-07：同步最新分支并发布 Buzz Codex Lab 0.5.18
 
 - 现象：需要将 `Lin/develop` 的最新修改打包为启用在线更新的正式版本 `0.5.18`。

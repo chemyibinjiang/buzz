@@ -10,6 +10,10 @@ export const STARTUP_CHANGELOG: StartupChangelogEntry[] = [
   {
     date: "2026-09-07",
     items: [
+      "【主要更新】修复孤立 Codex task Agent 定义在启动后重新出现的问题，并自动清理旧版本遗留记录。",
+      "支持动态 Codex runtime 端口，降低多个 app-server 并行运行时的端口冲突。",
+      "改善大型 Codex task 的恢复、shared runtime 连接门禁和欢迎 Agent 跨 Relay 复用。",
+      "增强 Agent 列表、连接对话框及启动引导的错误提示和状态一致性。",
       "【主要更新】增强 Relay 连接安全和断线恢复，降低公网、内网切换及长连接异常造成的消息中断。",
       "修复线程回复和 Profile 批量加载在 Relay 较慢或重连时失败的问题，并改进恢复后的数据补齐。",
       "增强应用状态重置和 Codex runtime 生命周期处理，减少切换 Community、退出或重新连接后的残留状态。",

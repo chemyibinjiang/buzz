@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.19
+
+### Buzz Codex Lab
+
+- 修复孤立 Codex task Agent 定义在启动后重新出现的问题，并补充迁移清理。
+- 支持动态 Codex runtime 端口，降低多个 app-server 并行运行时的冲突。
+- 改善大型 Codex task 的恢复、shared runtime 连接门禁和欢迎 Agent 跨 Relay 复用。
+- 增强 Agent 列表、连接对话框及启动引导的错误提示和状态一致性。
+
 ## v0.5.18
 
 ### Buzz Codex Lab
