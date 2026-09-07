@@ -19,8 +19,8 @@
 - 现象：需要将 `Lin/develop` 的最新修改打包为启用在线更新的正式版本 `0.5.18`。
 - 定位：本地与 `origin/Lin/develop` 已同步到提交 `4689d1a1`；工作区中的未提交内容是 `0.5.18` 版本号、应用内更新日志和仓库 changelog 的发布准备改动。
 - 处理：同步桌面端各版本源为 `0.5.18`，补充最近 Relay 安全、慢连接恢复、Community 状态清理与 Codex shared runtime 生命周期相关更新日志；使用本地 updater key 和 DPAPI 密码签名构建，并发布正式 GitHub Release 与滚动 updater manifest。
-- 验证：待完成桌面测试、TypeScript/格式检查、Tauri 构建、updater 签名验证及 GitHub Release 资产回读。
-- 版本/提交：`0.5.18` / 待提交。
+- 验证：更新日志测试 3/3、版本相关 Biome 检查、Tauri 独立缓存检查、Windows NSIS 构建和 updater 签名验证通过；GitHub Release 资产已回读确认。
+- 版本/提交：`0.5.18` / `4c21528e`。
 
 ## 2026-08-29：公网 Community 频道无法连接
 
