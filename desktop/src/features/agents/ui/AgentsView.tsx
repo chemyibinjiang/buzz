@@ -33,17 +33,17 @@ import { useManagedAgentActions } from "./useManagedAgentActions";
 import { usePersonaActions } from "./usePersonaActions";
 import { useTeamActions } from "./useTeamActions";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
+import { useCodexSharedRuntimeQuery } from "@/features/agents/codexSharedRuntimeHooks";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import { useManagedAgentRuntimesQuery } from "@/features/agents/managedAgentRuntimeHooks";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import {
+  getCodexRuntimeIndicator,
   hasCodexDesktopRuntimeConflict,
   isCodexSharedRuntimeUsable,
 } from "@/features/agents/codexSharedRuntimeStatus";
-import {
-  getCodexSharedRuntimeStatus,
-  launchCodexDesktopShared,
-} from "@/shared/api/codexTasks";
+import { launchCodexDesktopShared } from "@/shared/api/codexTasks";
 import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
@@ -60,6 +60,8 @@ export function AgentsView() {
   const { data: bakedEnv } = useBakedBuildEnvQuery({ enabled: true });
   const inheritedDefaults = getInheritedAgentDefaults(globalConfig, bakedEnv);
   const agents = useManagedAgentActions();
+  const codexRuntimeStatusQuery = useCodexSharedRuntimeQuery();
+  const managedAgentRuntimesQuery = useManagedAgentRuntimesQuery();
   const personas = usePersonaActions();
   const teamImportInputRef = React.useRef<HTMLInputElement | null>(null);
   const aiDefaultsTriggerRef = React.useRef<HTMLButtonElement>(null);
@@ -83,10 +85,18 @@ export function AgentsView() {
   async function openCodexDesktop() {
     setIsOpeningCodex(true);
     try {
-      const status = await getCodexSharedRuntimeStatus();
+      const statusResult = await codexRuntimeStatusQuery.refetch();
+      const status = statusResult.data;
+      if (!status) {
+        throw (
+          statusResult.error ??
+          new Error("Codex runtime status is unavailable.")
+        );
+      }
       if (
         !isCodexSharedRuntimeUsable(status) ||
-        hasCodexDesktopRuntimeConflict(status)
+        hasCodexDesktopRuntimeConflict(status) ||
+        status.desktopProcessIds.length > 0
       ) {
         setIsCodexRuntimeOpen(true);
         return;
@@ -94,6 +104,7 @@ export function AgentsView() {
 
       await launchCodexDesktopShared();
       toast.success("Opening Codex Desktop");
+      void codexRuntimeStatusQuery.refetch();
     } catch (cause) {
       setIsCodexRuntimeOpen(true);
       toast.error("Could not open Codex Desktop", {
@@ -142,6 +153,11 @@ export function AgentsView() {
         (value) => value.trim().length > 0,
       ),
   );
+  const codexRuntimeIndicator = getCodexRuntimeIndicator(
+    codexRuntimeStatusQuery.data,
+    codexRuntimeStatusQuery.isLoading,
+  );
+  const isCodexRunningHere = codexRuntimeIndicator.state === "running";
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only; personas.handleImportSnapshotFile and teamActions.handleImportTeamSnapshotFile are stable
   React.useEffect(() => {
     // Consume a snapshot import that was enqueued before navigation (e.g. from
@@ -190,14 +206,30 @@ export function AgentsView() {
                     Add Codex task
                   </Button>
                   <Button
+                    className={
+                      isCodexRunningHere
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200"
+                        : undefined
+                    }
                     data-testid="open-codex-desktop-button"
+                    data-runtime-state={codexRuntimeIndicator.state}
                     disabled={isOpeningCodex}
                     onClick={() => void openCodexDesktop()}
                     size="sm"
                     variant="outline"
                   >
-                    <MonitorUp />
-                    {isOpeningCodex ? "Starting..." : "Start Codex Desktop"}
+                    <span className="relative inline-flex">
+                      <MonitorUp />
+                      {isCodexRunningHere ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-500 ring-2 ring-background"
+                        />
+                      ) : null}
+                    </span>
+                    {isOpeningCodex
+                      ? "Starting..."
+                      : codexRuntimeIndicator.label}
                   </Button>
                   <Button
                     data-testid="agent-defaults-button"
@@ -246,11 +278,18 @@ export function AgentsView() {
                       Add Codex task
                     </DropdownMenuItem>
                     <DropdownMenuItem
+                      className={
+                        isCodexRunningHere
+                          ? "text-emerald-700 focus:text-emerald-800 dark:text-emerald-300 dark:focus:text-emerald-200"
+                          : undefined
+                      }
                       disabled={isOpeningCodex}
                       onSelect={() => void openCodexDesktop()}
                     >
                       <MonitorUp />
-                      {isOpeningCodex ? "Starting..." : "Start Codex Desktop"}
+                      {isOpeningCodex
+                        ? "Starting..."
+                        : codexRuntimeIndicator.label}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => {
@@ -286,6 +325,7 @@ export function AgentsView() {
               actionErrorMessage={agents.actionErrorMessage}
               actionNoticeMessage={agents.actionNoticeMessage}
               agents={agents.managedAgents}
+              agentRuntimes={managedAgentRuntimesQuery.data ?? []}
               agentsError={
                 agents.managedAgentsQuery.error instanceof Error
                   ? agents.managedAgentsQuery.error
@@ -294,6 +334,7 @@ export function AgentsView() {
               isActionPending={isActionPending}
               isAgentsLoading={agents.managedAgentsQuery.isLoading}
               startingAgentPubkey={agents.startingAgentPubkey}
+              stoppingAgentPubkey={agents.stoppingAgentPubkey}
               restartingAgentPubkey={agents.restartingAgentPubkey}
               startingPersonaIds={agents.startingPersonaIds}
               onOpenAgentProfile={(pubkey, options) => {
@@ -304,6 +345,9 @@ export function AgentsView() {
               }}
               onStartAgent={(pubkey) => {
                 void agents.handleStart(pubkey);
+              }}
+              onStopAgent={(pubkey) => {
+                void agents.handleStop(pubkey);
               }}
               onRestartAgent={(pubkey) => {
                 void agents.handleRestart(pubkey);

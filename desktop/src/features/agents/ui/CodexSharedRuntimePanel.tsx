@@ -1,5 +1,13 @@
 import * as React from "react";
-import { CircleAlert, CircleCheck, MonitorUp, RefreshCw } from "lucide-react";
+import {
+  CircleAlert,
+  CircleCheck,
+  Monitor,
+  MonitorUp,
+  RefreshCw,
+  Server,
+  TriangleAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -25,6 +33,60 @@ import {
 } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
 
+type RuntimeState = "running" | "stopped" | "warning" | "checking";
+
+function RuntimeStatusRow({
+  description,
+  icon,
+  label,
+  state,
+  testId,
+  title,
+}: {
+  description: React.ReactNode;
+  icon: React.ReactNode;
+  label: string;
+  state: RuntimeState;
+  testId: string;
+  title: string;
+}) {
+  const statusClass =
+    state === "running"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : state === "warning"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-muted-foreground";
+  const dotClass =
+    state === "running"
+      ? "bg-emerald-500"
+      : state === "warning"
+        ? "bg-amber-500"
+        : state === "checking"
+          ? "animate-pulse bg-muted-foreground"
+          : "bg-muted-foreground/50";
+
+  return (
+    <div className="flex min-w-0 items-start gap-3 py-2.5" data-testid={testId}>
+      <span className="mt-0.5 shrink-0 text-muted-foreground">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{title}</p>
+        <div className="break-all text-xs text-muted-foreground">
+          {description}
+        </div>
+      </div>
+      <span
+        className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${statusClass}`}
+      >
+        <span
+          aria-hidden="true"
+          className={`size-1.5 rounded-full ${dotClass}`}
+        />
+        {label}
+      </span>
+    </div>
+  );
+}
+
 export function CodexSharedRuntimePanel({
   enabled = true,
 }: {
@@ -47,6 +109,7 @@ export function CodexSharedRuntimePanel({
   const adapterReady = codexRuntime?.availability === "available";
   const fullyReady = usable && adapterReady;
   const checking = statusQuery.isLoading || runtimesQuery.isLoading;
+  const desktopRunning = (status?.desktopProcessIds.length ?? 0) > 0;
 
   async function setupRuntime() {
     setSetupError(null);
@@ -174,6 +237,56 @@ export function CodexSharedRuntimePanel({
           </div>
         </div>
 
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">
+            Running on this computer
+          </p>
+          <div className="divide-y divide-border/60 border-y border-border/60">
+            <RuntimeStatusRow
+              description={status?.url ?? "Local shared endpoint"}
+              icon={<Server className="size-4" />}
+              label={
+                statusQuery.isLoading
+                  ? "Checking"
+                  : ready
+                    ? "Running"
+                    : "Stopped"
+              }
+              state={
+                statusQuery.isLoading
+                  ? "checking"
+                  : ready
+                    ? "running"
+                    : "stopped"
+              }
+              testId="codex-runtime-shared"
+              title="Shared app-server"
+            />
+            <RuntimeStatusRow
+              description={
+                desktopRunning
+                  ? `PID${status?.desktopProcessIds.length === 1 ? "" : "s"} ${status?.desktopProcessIds.join(", ")}`
+                  : "No Codex Desktop process detected"
+              }
+              icon={<Monitor className="size-4" />}
+              label={desktopRunning ? "Running" : "Stopped"}
+              state={desktopRunning ? "running" : "stopped"}
+              testId="codex-runtime-desktop"
+              title="Codex Desktop GUI"
+            />
+            {conflict ? (
+              <RuntimeStatusRow
+                description={`PID${status?.privateAppServerProcessIds.length === 1 ? "" : "s"} ${status?.privateAppServerProcessIds.join(", ")}`}
+                icon={<TriangleAlert className="size-4" />}
+                label="Conflict"
+                state="warning"
+                testId="codex-runtime-conflict"
+                title="Private Desktop app-server"
+              />
+            ) : null}
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
           {conflict && ready ? (
             <Button
@@ -202,7 +315,7 @@ export function CodexSharedRuntimePanel({
                     : "Enable shared runtime"
                   : "Set up Codex"}
             </Button>
-          ) : usable ? (
+          ) : usable && !desktopRunning ? (
             <Button
               disabled={launchMutation.isPending}
               onClick={() => void launchDesktop()}
@@ -213,6 +326,11 @@ export function CodexSharedRuntimePanel({
               <MonitorUp />
               {launchMutation.isPending ? "Starting..." : "Start Codex Desktop"}
             </Button>
+          ) : desktopRunning ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              Codex Desktop is running
+            </span>
           ) : null}
           <Button
             aria-label="Check Codex shared runtime again"

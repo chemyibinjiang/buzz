@@ -316,3 +316,27 @@
 - 处理：shared runtime 改用稳定的完整 stdio transport，指向 Buzz 安装到 shared-runtime 支持目录的轻量 Node bridge。Buzz 显式启动 Desktop 前后对 named pipe 做差集，只登记本次唯一的新 pipe 与同一 Codex 包内的官方 `server.mjs`；bridge 在每个 task 启动时读取 registry，Desktop 在线时动态加载官方实现，离线或 registry 失效时提供合法的空 MCP。默认 `enabled_tools=[]` 避免后台 Buzz Agent 意外控制 GUI，Desktop 的逐 task 工具过滤仍可正常覆盖。registry 和 bridge 位于身份数据目录外，退出登录或重置 Buzz 不会破坏仍在运行的 shared runtime。
 - 验证：Node 单元测试覆盖 MCP 降级握手、空工具、有效和失效 registry；Rust 单元测试覆盖脚本安装、registry 状态切换、TOML transport 与持久目录。真实 Windows 链路 `cmd.exe -> bridge -> Codex 官方 server.mjs -> Desktop pipe` 返回 38 个工具，包含 `read_thread` 和 `capture_screen_context`；临时 51949 app-server 在 Desktop 的局部 `enabled_tools` 覆盖下成功恢复 task `01a07496-5d2b-7493-b631-6af817f0e0ce` 的 55 个 turns，未再出现 `invalid transport`。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-08：超大 Codex task 绑定为 Agent 时恢复请求超时
+
+- 现象：task `019f364d-9a30-7ae1-96c1-ef8a7d1b6271` 已正确绑定为 `大管家`，但 Agent 连续三次在启动约 60 秒后退出，UI 将其笼统提示为可能被 Codex Desktop 占用或 shared app-server 无响应。
+- 定位：Agent 身份、task binding、workspace、51919 shared runtime 和 Relay 连接均正常；task 当前为 idle，且是 app-server 的 loaded thread。对应 rollout 文件已达到 1,267,692,466 bytes（约 1.18 GiB）。真实 ACP `session/resume` 探针超过 270 秒仍未返回，而 app-server 保持健康、无新的 writer-conflict 记录，说明失败点是超大历史的恢复链路卡住，而不是名称、重复绑定或当前 active turn。
+- 处理：保留原 Agent、task 和 rollout，不自动清理或改绑；普通 ACP RPC 继续使用 60 秒超时，仅将 `session/resume` 与兼容回退的 `session/load` 扩展到 10 分钟。Desktop 卡片读取当前 relay pair 的真实 lifecycle，恢复时显示持续时间、禁用重复启动，并提供停止按钮终止仍在恢复的 harness；eager/task-bound harness 成功预载后显式发送 `ready`。超过 10 分钟仍失败时，提示区分超大历史、active turn 和 shared runtime 卡顿，并建议 compact 或建立轻量 continuation task。
+- 验证：本地 agent 日志三次均停在旧版 `failed to load identity-bound Codex task: Request timeout`；`thread/loaded/list` 能列出目标 task，Codex task API 返回 idle；独立 ACP probe 在 270 秒内未收到 `session/resume` 响应。新增 Rust 单元测试确认普通请求保持 60 秒、两种恢复请求使用 10 分钟；Desktop 类型检查及 53 个 runtime/error/control 聚焦测试通过。完整 `buzz-acp` 套件在当前 Windows PowerShell 环境中运行到 780 通过、49 失败，失败项均依赖缺失的 Unix `cat`/Bash 脚本或并行时序，新增及相邻 resume 用例单独运行通过。探针及其子进程已终止，未修改 task 内容。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，基线 `10a19d26`，待提交。
+
+## 2026-09-08：Agents 顶栏无法辨认本机 Codex runtime 状态
+
+- 现象：从 Buzz 启动 Codex Desktop 后，Agents 顶栏仍显示 `Start Codex Desktop`，用户无法确认 Desktop 是否已经运行，也看不到 shared app-server 或冲突 runtime。
+- 定位：后端状态接口已返回 shared runtime 健康状态、Desktop PID 和私有 app-server PID，但顶栏只在点击时临时查询，未渲染轮询结果；详情面板也只以说明文字显示冲突数量。
+- 处理：顶栏接入现有 10 秒状态查询，Desktop 运行时显示绿色 `Codex running here`，状态异常时显示冲突或不可用；点击运行状态打开详情。详情面板按行列出 shared app-server、Codex Desktop GUI 及私有冲突 runtime，并显示 endpoint、PID 和运行状态。Desktop 启动成功后主动刷新状态缓存。
+- 验证：Desktop TypeScript typecheck 与聚焦 Biome 检查通过；状态判定和 runtime panel 单测 5/5 通过；E2E mock build 成功，Playwright smoke 1/1 通过，并在截图中确认绿色顶栏状态、shared endpoint、Desktop PID 和无冲突状态均正确显示。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-09-08：内网传输上传的 Buzz 图片无法作为原生图像交给 Codex
+
+- 现象：Codex task `01a07ef2-8295-7d11-b722-6bec5e0faa86` 收到 Buzz 消息中的三张图片后，只能看到 Markdown URL 和 metadata，rollout 中没有 ACP `input_image` 内容块，Agent 无法读取像素。
+- 定位：三份 `imeta` 的 MIME、大小和哈希均合法，Codex ACP 1.2.0 也声明支持原生图片。失败 URL 均为 `https://10.24.11.82:3000/media/...`；该端口实际提供 HTTP/WebSocket 而非 HTTPS，HTTPS 在 TLS 握手阶段失败，HTTP 则能到达受保护的 Blossom 路由并要求 Agent 签名。ACP 的自动预取严格比较 URL scheme，因而在生成原生图片块前丢弃下载。
+- 处理：ACP 原生图片预取、`buzz media get` 和 `buzz-dev-mcp` 图片/附件读取统一按当前 relay 传输修正同 authority 媒体 URL 的协议，并继续以 Agent 身份执行受认证下载。修正仅允许 host 与有效 port 完全一致、路径位于 `/media/` 且不含 userinfo、query 或 fragment；不同主机和端口继续拒绝，避免凭据泄露及 SSRF 范围扩大。旧事件无需重写即可恢复读取。
+- 验证：`buzz-acp` 协议修正与拒绝测试 2/2、`buzz-cli` 媒体 URL/签名测试 5/5、`buzz-dev-mcp` relay 媒体测试 3/3 通过；测试覆盖现场 `https://10.24.11.82:3000` 到 `http://10.24.11.82:3000` 的修正，以及外部 host、不同 port、userinfo 和 query 的拒绝。
+- 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。

@@ -276,6 +276,32 @@ fn unix_now_secs() -> u64 {
         .as_secs()
 }
 
+fn normalize_relay_media_url(base_url: &str, media_url: &str) -> Result<url::Url, RelayError> {
+    let base = url::Url::parse(base_url)
+        .map_err(|error| RelayError::Http(format!("invalid relay URL: {error}")))?;
+    let mut media = url::Url::parse(media_url)
+        .map_err(|error| RelayError::Http(format!("invalid media URL: {error}")))?;
+    let same_authority = base.host_str().is_some()
+        && base.host_str() == media.host_str()
+        && base.port_or_known_default() == media.port_or_known_default();
+    if !matches!(base.scheme(), "http" | "https")
+        || !matches!(media.scheme(), "http" | "https")
+        || !same_authority
+        || !media.path().starts_with("/media/")
+        || !media.username().is_empty()
+        || media.password().is_some()
+        || media.query().is_some()
+        || media.fragment().is_some()
+    {
+        return Err(RelayError::Http("refusing non-relay media URL".to_string()));
+    }
+
+    media
+        .set_scheme(base.scheme())
+        .map_err(|_| RelayError::Http("invalid relay media scheme".to_string()))?;
+    Ok(media)
+}
+
 impl RestClient {
     fn blossom_get_header(&self, media_url: &str) -> Result<String, RelayError> {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -312,22 +338,7 @@ impl RestClient {
         media_url: &str,
         max_bytes: usize,
     ) -> Result<Vec<u8>, RelayError> {
-        let base = url::Url::parse(&self.base_url)
-            .map_err(|error| RelayError::Http(format!("invalid relay URL: {error}")))?;
-        let media = url::Url::parse(media_url)
-            .map_err(|error| RelayError::Http(format!("invalid media URL: {error}")))?;
-        let same_origin = base.scheme() == media.scheme()
-            && base.host_str() == media.host_str()
-            && base.port_or_known_default() == media.port_or_known_default();
-        if !same_origin
-            || !media.path().starts_with("/media/")
-            || !media.username().is_empty()
-            || media.password().is_some()
-            || media.query().is_some()
-            || media.fragment().is_some()
-        {
-            return Err(RelayError::Http("refusing non-relay media URL".to_string()));
-        }
+        let media = normalize_relay_media_url(&self.base_url, media_url)?;
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
@@ -336,7 +347,7 @@ impl RestClient {
             .map_err(|error| RelayError::Http(format!("media client init failed: {error}")))?;
         let mut request = client
             .get(media.clone())
-            .header("Authorization", self.blossom_get_header(media_url)?);
+            .header("Authorization", self.blossom_get_header(media.as_str())?);
         if let Some(auth_tag) = &self.auth_tag_json {
             request = request.header("x-auth-tag", auth_tag);
         }
@@ -4191,6 +4202,33 @@ mod tests {
             relay_ws_to_http("wss://relay.example.com:4000/ws"),
             "https://relay.example.com:4000/ws"
         );
+    }
+
+    #[test]
+    fn relay_media_url_uses_active_relay_transport_scheme() {
+        let hash = "a".repeat(64);
+        let normalized = normalize_relay_media_url(
+            "http://10.24.11.82:3000",
+            &format!("https://10.24.11.82:3000/media/{hash}.png"),
+        )
+        .unwrap();
+        assert_eq!(
+            normalized.as_str(),
+            format!("http://10.24.11.82:3000/media/{hash}.png")
+        );
+    }
+
+    #[test]
+    fn relay_media_url_rejects_other_authorities_and_unsafe_urls() {
+        let hash = "a".repeat(64);
+        for media_url in [
+            format!("https://evil.example:3000/media/{hash}.png"),
+            format!("https://10.24.11.82:4000/media/{hash}.png"),
+            format!("https://user@10.24.11.82:3000/media/{hash}.png"),
+            format!("https://10.24.11.82:3000/media/{hash}.png?token=secret"),
+        ] {
+            assert!(normalize_relay_media_url("http://10.24.11.82:3000", &media_url).is_err());
+        }
     }
 
     #[test]

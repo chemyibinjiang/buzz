@@ -320,7 +320,7 @@ fn is_safe_media_ext(value: &str) -> bool {
 fn media_url_from_input(relay_url: &str, input: &str) -> Result<String, CliError> {
     let input = input.trim();
     if input.starts_with("http://") || input.starts_with("https://") {
-        let parsed = url::Url::parse(input)
+        let mut parsed = url::Url::parse(input)
             .map_err(|e| CliError::Usage(format!("invalid media URL: {e}")))?;
         if !parsed.path().starts_with("/media/") {
             return Err(CliError::Usage(
@@ -339,15 +339,22 @@ fn media_url_from_input(relay_url: &str, input: &str) -> Result<String, CliError
         }
         let relay = url::Url::parse(relay_url)
             .map_err(|e| CliError::Usage(format!("invalid relay URL: {e}")))?;
-        if parsed.scheme() != relay.scheme()
+        if parsed.host_str().is_none()
             || parsed.host_str() != relay.host_str()
             || parsed.port_or_known_default() != relay.port_or_known_default()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
         {
             return Err(CliError::Usage(
                 "refusing to sign media GET for a non-relay origin".to_string(),
             ));
         }
-        return Ok(input.to_string());
+        parsed
+            .set_scheme(relay.scheme())
+            .map_err(|_| CliError::Usage("invalid relay media scheme".to_string()))?;
+        return Ok(parsed.to_string());
     }
     if input.contains("://") {
         return Err(CliError::Usage(
@@ -459,11 +466,14 @@ mod media_download_tests {
             &format!("https://relay.example/media/{hash}.jpg")
         )
         .is_ok());
-        assert!(media_url_from_input(
-            "https://relay.example",
-            &format!("http://relay.example/media/{hash}.jpg")
-        )
-        .is_err());
+        assert_eq!(
+            media_url_from_input(
+                "http://10.24.11.82:3000",
+                &format!("https://10.24.11.82:3000/media/{hash}.jpg")
+            )
+            .unwrap(),
+            format!("http://10.24.11.82:3000/media/{hash}.jpg")
+        );
         assert!(media_url_from_input(
             "https://relay.example",
             &format!("https://evil.example/media/{hash}.jpg")

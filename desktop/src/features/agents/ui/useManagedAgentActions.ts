@@ -278,7 +278,10 @@ export function useManagedAgentActions() {
     try {
       const agent = managedAgents.find((a) => a.pubkey === pubkey);
       if (!agent) return;
-      const channels = await getChannelsForAction();
+      const channels =
+        agent.backend.type === "provider"
+          ? await getChannelsForAction()
+          : (channelsQuery.data ?? []);
       const result = await stopManagedAgentWithRules({
         agent,
         channels,
@@ -433,6 +436,10 @@ export function useManagedAgentActions() {
     startMutation.isPending && typeof startMutation.variables === "string"
       ? startMutation.variables
       : null;
+  const stoppingAgentPubkey =
+    stopMutation.isPending && typeof stopMutation.variables === "string"
+      ? stopMutation.variables
+      : null;
 
   return {
     relayAgentsQuery,
@@ -455,6 +462,7 @@ export function useManagedAgentActions() {
     actionErrorMessage,
     setActionErrorMessage,
     startingAgentPubkey,
+    stoppingAgentPubkey,
     restartingAgentPubkey,
     startingPersonaIds,
     handleStart,

@@ -233,16 +233,33 @@ fn decode_data_url(src: &str) -> Result<Vec<u8>, String> {
 /// Safety contract: this is the *only* gate that decides whether we attach a
 /// signed auth header. It must never match arbitrary third-party origins,
 /// where the bearer token would leak.
-fn is_relay_media_url(target: &reqwest::Url, relay: &reqwest::Url) -> bool {
+fn normalize_relay_media_url(target: &reqwest::Url, relay: &reqwest::Url) -> Option<reqwest::Url> {
     if !matches!(target.scheme(), "http" | "https") {
-        return false;
+        return None;
     }
-    if !target.path().starts_with("/media/") {
-        return false;
+    let relay_scheme = match relay.scheme() {
+        "http" | "ws" => "http",
+        "https" | "wss" => "https",
+        _ => return None,
+    };
+    if !target.path().starts_with("/media/")
+        || !target.username().is_empty()
+        || target.password().is_some()
+        || target.query().is_some()
+        || target.fragment().is_some()
+        || target.host_str().is_none()
+        || target.host_str() != relay.host_str()
+        || target.port_or_known_default() != relay.port_or_known_default()
+    {
+        return None;
     }
-    target.host_str().is_some()
-        && target.host_str() == relay.host_str()
-        && target.port_or_known_default() == relay.port_or_known_default()
+    let mut normalized = target.clone();
+    normalized.set_scheme(relay_scheme).ok()?;
+    Some(normalized)
+}
+
+fn is_relay_media_url(target: &reqwest::Url, relay: &reqwest::Url) -> bool {
+    normalize_relay_media_url(target, relay).is_some()
 }
 
 /// Sign a Blossom (BUD-01) `t=get` authorization event, server-scoped to
@@ -319,8 +336,15 @@ fn relay_media_get_auth(url: &reqwest::Url) -> Option<String> {
 /// Relay-hosted `/media/` URLs get a signed Blossom `t=get` header when
 /// `BUZZ_RELAY_URL` + `BUZZ_PRIVATE_KEY` are configured.
 async fn fetch_url(url: &str) -> Result<Vec<u8>, ErrorData> {
-    let parsed = reqwest::Url::parse(url)
+    let mut parsed = reqwest::Url::parse(url)
         .map_err(|e| invalid_params(format!("invalid URL: {url} ({e})")))?;
+    if let Ok(relay_value) = std::env::var("BUZZ_RELAY_URL") {
+        if let Ok(relay) = reqwest::Url::parse(&relay_value) {
+            if let Some(normalized) = normalize_relay_media_url(&parsed, &relay) {
+                parsed = normalized;
+            }
+        }
+    }
     let auth = relay_media_get_auth(&parsed);
     let mut client_builder = reqwest::Client::builder()
         .connect_timeout(FETCH_TIMEOUT)
@@ -405,12 +429,12 @@ pub(crate) async fn fetch_relay_attachment(url: &str) -> Result<Vec<u8>, ErrorDa
     })?;
     let relay = reqwest::Url::parse(&relay_value)
         .map_err(|e| invalid_params(format!("BUZZ_RELAY_URL is invalid: {relay_value} ({e})")))?;
-    if !is_relay_media_url(&parsed, &relay) {
-        return Err(invalid_params(
+    let normalized = normalize_relay_media_url(&parsed, &relay).ok_or_else(|| {
+        invalid_params(
             "attachment URL must be under /media/ on the configured Buzz relay".to_string(),
-        ));
-    }
-    fetch_url(url).await
+        )
+    })?;
+    fetch_url(normalized.as_str()).await
 }
 
 /// Sniff the image format from magic bytes alone (do not trust extensions
@@ -1125,6 +1149,16 @@ mod tests {
             &u("http://relay.example.com/media/abc.png"),
             &u("wss://relay.example.com")
         ));
+    }
+
+    #[test]
+    fn relay_media_url_uses_active_relay_transport_scheme() {
+        let normalized = normalize_relay_media_url(
+            &u("https://10.24.11.82:3000/media/abc.png"),
+            &u("ws://10.24.11.82:3000"),
+        )
+        .unwrap();
+        assert_eq!(normalized.as_str(), "http://10.24.11.82:3000/media/abc.png");
     }
 
     #[test]

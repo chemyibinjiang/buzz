@@ -58,7 +58,15 @@ export function useSetupCodexSharedRuntimeMutation() {
 }
 
 export function useLaunchCodexDesktopSharedMutation() {
-  return useMutation({ mutationFn: launchCodexDesktopShared });
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: launchCodexDesktopShared,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: codexSharedRuntimeQueryKey,
+      });
+    },
+  });
 }
 
 export function useTakeOverCodexDesktopSharedMutation() {

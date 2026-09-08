@@ -46,7 +46,7 @@ export const CLI_ACP_INTERNAL_ERROR_COPY =
   "The agent's harness reported an internal error. For Codex agents this can mean the configured model isn't supported by your installed codex-acp — check the model in `~/.codex/config.toml` or upgrade the adapter (`brew upgrade codex-acp`).";
 
 export const CODEX_TASK_LOAD_FAILED_COPY =
-  "The Codex task did not load before the 60-second timeout. It may be busy in Codex Desktop, or the shared app-server may be unresponsive. Wait for the task to become idle, then retry.";
+  "The Codex task did not finish resuming within Buzz's 10-minute recovery window. A very large task history, an active Codex Desktop turn, or a stalled shared app-server can cause this. Wait for the task to become idle, then retry once; if it repeats, compact or continue the task in a fresh Codex task before binding it.";
 
 export const CODEX_TASK_FRAME_TOO_LARGE_COPY =
   "This Codex task produced more history than this Buzz build can load in one ACP frame. Update Buzz, or compact/fork the Codex task, then retry.";

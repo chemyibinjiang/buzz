@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Clock3,
   EllipsisVertical,
   Pencil,
 } from "lucide-react";
@@ -14,8 +15,17 @@ import {
 import { resolveAgentCardModelLabel } from "@/features/agents/lib/agentCardModelLabel";
 import { friendlyAgentLastError } from "@/features/agents/lib/friendlyAgentLastError";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import {
+  findManagedAgentRuntime,
+  formatRuntimeElapsed,
+  isCodexTaskRuntimeRestoring,
+} from "@/features/agents/managedAgentRuntimeStatus";
 import { useUserProfileQuery } from "@/features/profile/hooks";
-import type { AgentPersona, ManagedAgent } from "@/shared/api/types";
+import type {
+  AgentPersona,
+  ManagedAgent,
+  ManagedAgentRuntimeStatus,
+} from "@/shared/api/types";
 import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelContext";
 import { useFeedbackToasts } from "@/shared/hooks/useToastEffect";
 import { requestOpenEditAgent } from "@/features/agents/openEditAgentEvent";
@@ -38,11 +48,13 @@ type UnifiedAgentsSectionProps = {
   actionErrorMessage: string | null;
   actionNoticeMessage: string | null;
   agents: ManagedAgent[];
+  agentRuntimes: readonly ManagedAgentRuntimeStatus[];
   agentsError: Error | null;
   isActionPending: boolean;
   isAgentsLoading: boolean;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
+  stoppingAgentPubkey: string | null;
   startingPersonaIds: ReadonlySet<string>;
   onOpenAgentProfile: (
     pubkey: string,
@@ -51,6 +63,7 @@ type UnifiedAgentsSectionProps = {
   onOpenPersonaProfile: (persona: AgentPersona) => void;
   onRestartAgent: (pubkey: string) => void;
   onStartAgent: (pubkey: string) => void;
+  onStopAgent: (pubkey: string) => void;
   onStartPersona: (persona: AgentPersona) => void;
   personas: AgentPersona[];
   personasError: Error | null;
@@ -81,16 +94,19 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     actionNoticeMessage,
     defaultModel,
     agents,
+    agentRuntimes,
     agentsError,
     isActionPending,
     isAgentsLoading,
     restartingAgentPubkey,
     startingAgentPubkey,
+    stoppingAgentPubkey,
     startingPersonaIds,
     onOpenAgentProfile,
     onOpenPersonaProfile,
     onRestartAgent,
     onStartAgent,
+    onStopAgent,
     onStartPersona,
     personas,
     personasError,
@@ -162,16 +178,19 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
                     />
                   )}
                   agent={profileAgent}
+                  agentRuntimes={agentRuntimes}
                   defaultModel={defaultModel}
                   key={group.persona.id}
                   persona={group.persona}
                   restartingAgentPubkey={restartingAgentPubkey}
                   startingAgentPubkey={startingAgentPubkey}
+                  stoppingAgentPubkey={stoppingAgentPubkey}
                   startingPersonaIds={startingPersonaIds}
                   onOpenAgentProfile={onOpenAgentProfile}
                   onOpenPersonaProfile={onOpenPersonaProfile}
                   onRestartAgent={onRestartAgent}
                   onStartAgent={onStartAgent}
+                  onStopAgent={onStopAgent}
                   onStartPersona={onStartPersona}
                 />
               );
@@ -181,31 +200,37 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
           {unknown.length > 0 ? (
             <CollapsibleAgentGroup
               agents={unknown}
+              agentRuntimes={agentRuntimes}
               collapsed={collapsed}
               defaultModel={defaultModel}
               groupKey="__unknown__"
               label="Unknown agents"
               restartingAgentPubkey={restartingAgentPubkey}
               startingAgentPubkey={startingAgentPubkey}
+              stoppingAgentPubkey={stoppingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
               onRestartAgent={onRestartAgent}
               onStartAgent={onStartAgent}
+              onStopAgent={onStopAgent}
             />
           ) : null}
           {ungrouped.length > 0 ? (
             <CollapsibleAgentGroup
               agents={ungrouped}
+              agentRuntimes={agentRuntimes}
               collapsed={collapsed}
               defaultModel={defaultModel}
               groupKey="__ungrouped__"
               label="Custom agents"
               restartingAgentPubkey={restartingAgentPubkey}
               startingAgentPubkey={startingAgentPubkey}
+              stoppingAgentPubkey={stoppingAgentPubkey}
               onToggle={toggle}
               onOpenAgentProfile={onOpenAgentProfile}
               onRestartAgent={onRestartAgent}
               onStartAgent={onStartAgent}
+              onStopAgent={onStopAgent}
             />
           ) : null}
         </div>
@@ -232,15 +257,18 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
 function AgentPersonaCard({
   actions,
   agent,
+  agentRuntimes,
   defaultModel,
   persona,
   restartingAgentPubkey,
   startingAgentPubkey,
+  stoppingAgentPubkey,
   startingPersonaIds,
   onOpenAgentProfile,
   onOpenPersonaProfile,
   onRestartAgent,
   onStartAgent,
+  onStopAgent,
   onStartPersona,
 }: {
   actions?: (
@@ -248,10 +276,12 @@ function AgentPersonaCard({
     isEffectiveAvatarLoading: boolean,
   ) => React.ReactNode;
   agent: ManagedAgent | undefined;
+  agentRuntimes: readonly ManagedAgentRuntimeStatus[];
   defaultModel: string;
   persona: AgentPersona;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
+  stoppingAgentPubkey: string | null;
   startingPersonaIds: ReadonlySet<string>;
   onOpenAgentProfile: (
     pubkey: string,
@@ -260,6 +290,7 @@ function AgentPersonaCard({
   onOpenPersonaProfile: (persona: AgentPersona) => void;
   onRestartAgent: (pubkey: string) => void;
   onStartAgent: (pubkey: string) => void;
+  onStopAgent: (pubkey: string) => void;
   onStartPersona: (persona: AgentPersona) => void;
 }) {
   const title = persona.displayName;
@@ -269,6 +300,12 @@ function AgentPersonaCard({
     defaultModel,
   });
   const isActive = agent ? isManagedAgentActive(agent) : false;
+  const runtime = agent
+    ? findManagedAgentRuntime(agentRuntimes, agent.pubkey, agent.relayUrl)
+    : undefined;
+  const isRestoring = agent
+    ? isCodexTaskRuntimeRestoring(agent, runtime)
+    : false;
   const profileQuery = useUserProfileQuery(agent?.pubkey);
   const avatarUrl = agent
     ? resolveAgentCardAvatarUrl(profileQuery.data?.avatarUrl, persona.avatarUrl)
@@ -294,11 +331,14 @@ function AgentPersonaCard({
             errorLabel={friendlyError}
             errorTestId={`agent-runtime-error-${agent.pubkey}`}
             isActive={isActive}
+            isCancelling={stoppingAgentPubkey === agent.pubkey}
             isRestarting={restartingAgentPubkey === agent.pubkey}
-            isStarting={startingAgentPubkey === agent.pubkey}
+            isRestoring={isRestoring}
+            isStarting={isRestoring || startingAgentPubkey === agent.pubkey}
             label={title}
             requiresRestart={agent.needsRestart}
             startTestId={`agent-runtime-start-${agent.pubkey}`}
+            onCancel={() => onStopAgent(agent.pubkey)}
             onOpenError={() => {
               onOpenAgentProfile(agent.pubkey, { tab: "runtime" });
             }}
@@ -335,11 +375,8 @@ function AgentPersonaCard({
         onOpenPersonaProfile(persona);
       }}
       statusBadge={
-        agent?.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
+        agent ? (
+          <AgentCardStatusBadges agent={agent} isRestoring={isRestoring} />
         ) : null
       }
     />
@@ -348,23 +385,29 @@ function AgentPersonaCard({
 
 function StandaloneAgentCard({
   agent,
+  agentRuntimes,
   defaultModel,
   restartingAgentPubkey,
   startingAgentPubkey,
+  stoppingAgentPubkey,
   onOpenAgentProfile,
   onRestartAgent,
   onStartAgent,
+  onStopAgent,
 }: {
   agent: ManagedAgent;
+  agentRuntimes: readonly ManagedAgentRuntimeStatus[];
   defaultModel: string;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
+  stoppingAgentPubkey: string | null;
   onOpenAgentProfile: (
     pubkey: string,
     options?: ProfilePanelOpenOptions,
   ) => void;
   onRestartAgent: (pubkey: string) => void;
   onStartAgent: (pubkey: string) => void;
+  onStopAgent: (pubkey: string) => void;
 }) {
   const title = agent.name;
   const profileQuery = useUserProfileQuery(agent.pubkey);
@@ -373,6 +416,12 @@ function StandaloneAgentCard({
     agent.lastErrorCode,
   )?.copy;
   const isActive = isManagedAgentActive(agent);
+  const runtime = findManagedAgentRuntime(
+    agentRuntimes,
+    agent.pubkey,
+    agent.relayUrl,
+  );
+  const isRestoring = isCodexTaskRuntimeRestoring(agent, runtime);
   const opensRuntimeTab = Boolean(friendlyError && !isActive);
 
   return (
@@ -394,11 +443,14 @@ function StandaloneAgentCard({
           errorLabel={friendlyError}
           errorTestId={`agent-runtime-error-${agent.pubkey}`}
           isActive={isActive}
+          isCancelling={stoppingAgentPubkey === agent.pubkey}
           isRestarting={restartingAgentPubkey === agent.pubkey}
-          isStarting={startingAgentPubkey === agent.pubkey}
+          isRestoring={isRestoring}
+          isStarting={isRestoring || startingAgentPubkey === agent.pubkey}
           label={title}
           requiresRestart={agent.needsRestart}
           startTestId={`agent-runtime-start-${agent.pubkey}`}
+          onCancel={() => onStopAgent(agent.pubkey)}
           onOpenError={() => {
             onOpenAgentProfile(agent.pubkey, { tab: "runtime" });
           }}
@@ -424,14 +476,53 @@ function StandaloneAgentCard({
         );
       }}
       statusBadge={
-        agent.personaOrphaned ? (
-          <Badge className="gap-1" variant="warning">
-            <AlertTriangle className="h-3 w-3" />
-            Configuration missing
-          </Badge>
-        ) : null
+        <AgentCardStatusBadges agent={agent} isRestoring={isRestoring} />
       }
     />
+  );
+}
+
+function AgentCardStatusBadges({
+  agent,
+  isRestoring,
+}: {
+  agent: ManagedAgent;
+  isRestoring: boolean;
+}) {
+  if (!agent.personaOrphaned && !isRestoring) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {agent.personaOrphaned ? (
+        <Badge className="gap-1" variant="warning">
+          <AlertTriangle className="h-3 w-3" />
+          Configuration missing
+        </Badge>
+      ) : null}
+      {isRestoring ? (
+        <CodexTaskRestoreBadge startedAt={agent.lastStartedAt} />
+      ) : null}
+    </div>
+  );
+}
+
+function CodexTaskRestoreBadge({ startedAt }: { startedAt: string | null }) {
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const elapsed = formatRuntimeElapsed(startedAt, nowMs);
+
+  return (
+    <Badge
+      className="gap-1 normal-case tracking-normal"
+      title="Restoring the bound Codex task. Use the stop button to cancel."
+      variant="info"
+    >
+      <Clock3 className="h-3 w-3" />
+      {elapsed ? `Restoring ${elapsed}` : "Restoring task"}
+    </Badge>
   );
 }
 
@@ -483,22 +574,27 @@ function CollapsibleAgentGroup({
   groupKey,
   label,
   agents,
+  agentRuntimes,
   collapsed,
   defaultModel,
   restartingAgentPubkey,
   startingAgentPubkey,
+  stoppingAgentPubkey,
   onToggle,
   onOpenAgentProfile,
   onRestartAgent,
   onStartAgent,
+  onStopAgent,
 }: {
   groupKey: string;
   label: string;
   agents: ManagedAgent[];
+  agentRuntimes: readonly ManagedAgentRuntimeStatus[];
   collapsed: ReadonlySet<string>;
   defaultModel: string;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
+  stoppingAgentPubkey: string | null;
   onToggle: (key: string) => void;
   onOpenAgentProfile: (
     pubkey: string,
@@ -506,6 +602,7 @@ function CollapsibleAgentGroup({
   ) => void;
   onRestartAgent: (pubkey: string) => void;
   onStartAgent: (pubkey: string) => void;
+  onStopAgent: (pubkey: string) => void;
 }) {
   const isCollapsed = collapsed.has(groupKey);
   return (
@@ -528,13 +625,16 @@ function CollapsibleAgentGroup({
           {agents.map((agent) => (
             <StandaloneAgentCard
               agent={agent}
+              agentRuntimes={agentRuntimes}
               defaultModel={defaultModel}
               key={agent.pubkey}
               restartingAgentPubkey={restartingAgentPubkey}
               startingAgentPubkey={startingAgentPubkey}
+              stoppingAgentPubkey={stoppingAgentPubkey}
               onOpenAgentProfile={onOpenAgentProfile}
               onRestartAgent={onRestartAgent}
               onStartAgent={onStartAgent}
+              onStopAgent={onStopAgent}
             />
           ))}
         </div>
