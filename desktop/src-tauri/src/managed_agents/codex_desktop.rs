@@ -89,20 +89,11 @@ pub struct CodexSharedRuntimeStatus {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct WindowsProcessInfo {
+pub(super) struct WindowsProcessInfo {
     process_id: u32,
     parent_process_id: u32,
     executable_path: String,
     command_line: String,
-}
-
-#[cfg(windows)]
-#[derive(Debug, Deserialize)]
-struct WindowsCodexDesktopLaunch {
-    #[serde(flatten)]
-    process: WindowsProcessInfo,
-    app_tools_pipe_path: Option<String>,
-    app_tools_server_path: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Eq)]
@@ -1217,99 +1208,7 @@ pub async fn restore_codex_runtime(app: AppHandle) {
 }
 
 #[cfg(windows)]
-fn launch_codex_desktop_shared_unchecked(
-    app: &AppHandle,
-    url: &str,
-) -> Result<WindowsProcessInfo, String> {
-    use std::os::windows::process::CommandExt;
-
-    const SCRIPT: &str = r#"
-$ErrorActionPreference='Stop'
-function Get-CodexAppToolPipes {
-  @(Get-ChildItem -LiteralPath '\\.\pipe\' -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like 'codex-browser-use-*' } |
-    ForEach-Object { [string]$_.Name })
-}
-$before=@{}
-foreach ($name in @(Get-CodexAppToolPipes)) { $before[$name]=$true }
-$env:CODEX_APP_SERVER_WS_URL=$env:BUZZ_CODEX_DESKTOP_SHARED_URL
-$package=Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object @{Expression={if ($_.Name -eq 'OpenAI.Codex') {0} else {1}};Ascending=$true},@{Expression={$_.Version};Descending=$true} | Select-Object -First 1
-if (-not $package) { throw 'Codex Desktop is not installed' }
-$application=@((Get-AppxPackageManifest -Package $package).Package.Applications.Application)[0]
-$exe=[IO.Path]::GetFullPath((Join-Path $package.InstallLocation ([string]$application.Executable)))
-$server=[IO.Path]::GetFullPath((Join-Path $package.InstallLocation 'app\resources\plugins\openai-bundled\plugins\codex-app-tools\server.mjs'))
-if (-not (Test-Path -LiteralPath $server -PathType Leaf)) { throw "Codex app-tools server is missing: $server" }
-$process=Start-Process -FilePath $exe -PassThru
-$newPipes=@()
-for ($attempt=0; $attempt -lt 100; $attempt++) {
-  $newPipes=@(Get-CodexAppToolPipes | Where-Object { -not $before.ContainsKey($_) })
-  if ($newPipes.Count -gt 0) { break }
-  Start-Sleep -Milliseconds 100
-}
-$pipe=if ($newPipes.Count -eq 1) { "\\.\pipe\$($newPipes[0])" } else { $null }
-[pscustomobject]@{
-  process_id=[uint32]$process.Id
-  parent_process_id=0
-  executable_path=$exe
-  command_line=''
-  app_tools_pipe_path=$pipe
-  app_tools_server_path=$server
-} | ConvertTo-Json -Compress
-"#;
-    let registration = codex_app_tools::begin_desktop_launch(app)?;
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-        .env("BUZZ_CODEX_DESKTOP_SHARED_URL", url)
-        .creation_flags(0x0800_0000)
-        .output();
-    let output = match output {
-        Ok(output) => output,
-        Err(error) => {
-            let _ = codex_app_tools::rollback_desktop_launch(&registration);
-            return Err(format!("failed to launch Codex Desktop: {error}"));
-        }
-    };
-    if !output.status.success() {
-        let _ = codex_app_tools::rollback_desktop_launch(&registration);
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if detail.is_empty() {
-            "Windows could not launch Codex Desktop".to_string()
-        } else {
-            detail
-        });
-    }
-    let launched: WindowsCodexDesktopLaunch = match serde_json::from_slice(&output.stdout) {
-        Ok(launched) => launched,
-        Err(error) => {
-            let _ = codex_app_tools::rollback_desktop_launch(&registration);
-            return Err(format!(
-                "could not read the launched Codex Desktop process: {error}"
-            ));
-        }
-    };
-    let bridge = launched
-        .app_tools_pipe_path
-        .zip(launched.app_tools_server_path);
-    let Some((pipe_path, server_path)) = bridge else {
-        let _ = terminate_verified_windows_process(&launched.process, true);
-        let _ = codex_app_tools::rollback_desktop_launch(&registration);
-        return Err(
-            "Codex Desktop opened, but Buzz could not identify its app-tools pipe. The launch was closed to avoid attaching another Desktop instance."
-                .to_string(),
-        );
-    };
-    if let Err(error) =
-        codex_app_tools::complete_desktop_launch(&registration, pipe_path, server_path)
-    {
-        let _ = terminate_verified_windows_process(&launched.process, true);
-        let _ = codex_app_tools::rollback_desktop_launch(&registration);
-        return Err(error);
-    }
-    Ok(launched.process)
-}
-
-#[cfg(windows)]
-fn terminate_verified_windows_process(
+pub(super) fn terminate_verified_windows_process(
     process: &WindowsProcessInfo,
     include_tree: bool,
 ) -> Result<(), String> {
@@ -1354,7 +1253,7 @@ pub fn launch_codex_desktop_shared(app: &AppHandle) -> Result<(), String> {
     if !snapshot.desktop_processes.is_empty() {
         return Ok(());
     }
-    launch_codex_desktop_shared_unchecked(app, &url).map(|_| ())
+    codex_app_tools::launch_codex_desktop(app, &url).map(|_| ())
 }
 
 #[cfg(not(windows))]
@@ -1447,7 +1346,7 @@ pub async fn take_over_codex_desktop_shared(
         let launch_url = url.clone();
         let launch_app = app.clone();
         let launched = tokio::task::spawn_blocking(move || {
-            launch_codex_desktop_shared_unchecked(&launch_app, &launch_url)
+            codex_app_tools::launch_codex_desktop(&launch_app, &launch_url)
         })
         .await
         .map_err(|error| format!("Codex Desktop launch task failed: {error}"))??;

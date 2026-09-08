@@ -3,16 +3,66 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
+use std::process::Command;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use super::{atomic_write_json_restricted, buzz_managed_node_bin_path};
+
+#[cfg(windows)]
+use super::codex_desktop::{terminate_verified_windows_process, WindowsProcessInfo};
 
 const BRIDGE_VERSION: u32 = 1;
 const BRIDGE_SCRIPT: &str = include_str!("../../resources/codex_app_tools_bridge.mjs");
 const BRIDGE_LAUNCHER: &str = include_str!("../../resources/launch_codex_app_tools_bridge.cmd");
 #[cfg(not(windows))]
 const DISABLED_TRANSPORT: &str = r#"mcp_servers.codex_app={command="",enabled=false}"#;
+
+#[cfg(windows)]
+const WINDOWS_CODEX_DESKTOP_LAUNCH_SCRIPT: &str = r#"
+$ErrorActionPreference='Stop'
+function Get-CodexAppToolPipes {
+  @(Get-ChildItem -LiteralPath '\\.\pipe\' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'codex-browser-use-*' } |
+    ForEach-Object { [string]$_.Name })
+}
+$before=@{}
+foreach ($name in @(Get-CodexAppToolPipes)) { $before[$name]=$true }
+$env:CODEX_APP_SERVER_WS_URL=$env:BUZZ_CODEX_DESKTOP_SHARED_URL
+$package=Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object @{Expression={if ($_.Name -eq 'OpenAI.Codex') {0} else {1}};Ascending=$true},@{Expression={$_.Version};Descending=$true} | Select-Object -First 1
+if (-not $package) { throw 'Codex Desktop is not installed' }
+$application=@((Get-AppxPackageManifest -Package $package).Package.Applications.Application)[0]
+$exe=[IO.Path]::GetFullPath((Join-Path $package.InstallLocation ([string]$application.Executable)))
+$server=[IO.Path]::GetFullPath((Join-Path $package.InstallLocation 'app\resources\plugins\openai-bundled\plugins\codex-app-tools\server.mjs'))
+if (-not (Test-Path -LiteralPath $server -PathType Leaf)) { throw "Codex app-tools server is missing: $server" }
+$process=Start-Process -FilePath $exe -PassThru
+$newPipes=@()
+for ($attempt=0; $attempt -lt 100; $attempt++) {
+  $newPipes=@(Get-CodexAppToolPipes | Where-Object { -not $before.ContainsKey($_) })
+  if ($newPipes.Count -gt 0) { break }
+  Start-Sleep -Milliseconds 100
+}
+$pipe=if ($newPipes.Count -eq 1) { "\\.\pipe\$($newPipes[0])" } else { $null }
+[pscustomobject]@{
+  process_id=[uint32]$process.Id
+  parent_process_id=0
+  executable_path=$exe
+  command_line=''
+  app_tools_pipe_path=$pipe
+  app_tools_server_path=$server
+} | ConvertTo-Json -Compress
+"#;
+
+#[cfg(windows)]
+#[derive(Debug, Deserialize)]
+struct WindowsCodexDesktopLaunch {
+    #[serde(flatten)]
+    process: WindowsProcessInfo,
+    app_tools_pipe_path: Option<String>,
+    app_tools_server_path: Option<String>,
+}
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -215,6 +265,68 @@ pub(super) fn rollback_desktop_launch(
     registration: &DesktopLaunchRegistration,
 ) -> Result<(), String> {
     write_registry(&registration.registry_path, &registration.previous)
+}
+
+#[cfg(windows)]
+pub(super) fn launch_codex_desktop(
+    app: &AppHandle,
+    url: &str,
+) -> Result<WindowsProcessInfo, String> {
+    use std::os::windows::process::CommandExt;
+
+    let registration = begin_desktop_launch(app)?;
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            WINDOWS_CODEX_DESKTOP_LAUNCH_SCRIPT,
+        ])
+        .env("BUZZ_CODEX_DESKTOP_SHARED_URL", url)
+        .creation_flags(0x0800_0000)
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = rollback_desktop_launch(&registration);
+            return Err(format!("failed to launch Codex Desktop: {error}"));
+        }
+    };
+    if !output.status.success() {
+        let _ = rollback_desktop_launch(&registration);
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "Windows could not launch Codex Desktop".to_string()
+        } else {
+            detail
+        });
+    }
+    let launched: WindowsCodexDesktopLaunch = match serde_json::from_slice(&output.stdout) {
+        Ok(launched) => launched,
+        Err(error) => {
+            let _ = rollback_desktop_launch(&registration);
+            return Err(format!(
+                "could not read the launched Codex Desktop process: {error}"
+            ));
+        }
+    };
+    let bridge = launched
+        .app_tools_pipe_path
+        .zip(launched.app_tools_server_path);
+    let Some((pipe_path, server_path)) = bridge else {
+        let _ = terminate_verified_windows_process(&launched.process, true);
+        let _ = rollback_desktop_launch(&registration);
+        return Err(
+            "Codex Desktop opened, but Buzz could not identify its app-tools pipe. The launch was closed to avoid attaching another Desktop instance."
+                .to_string(),
+        );
+    };
+    if let Err(error) = complete_desktop_launch(&registration, pipe_path, server_path) {
+        let _ = terminate_verified_windows_process(&launched.process, true);
+        let _ = rollback_desktop_launch(&registration);
+        return Err(error);
+    }
+    Ok(launched.process)
 }
 
 #[cfg(test)]
