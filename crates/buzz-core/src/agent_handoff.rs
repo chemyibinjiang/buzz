@@ -60,7 +60,7 @@ fn validate_text(
     min: usize,
     max: usize,
 ) -> Result<(), ObserverPayloadError> {
-    let bytes = value.as_bytes().len();
+    let bytes = value.len();
     if value.trim().is_empty() || bytes < min || bytes > max {
         return Err(ObserverPayloadError::InvalidPayload(format!(
             "{field} must contain {min}..={max} UTF-8 bytes (got {bytes})"

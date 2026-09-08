@@ -39,9 +39,13 @@ pub(crate) fn relay_agents_from_events(
     for event in events.iter().filter(|event| event.kind.as_u16() == 5) {
         for tag in event.tags.iter() {
             let values = tag.as_slice();
-            let Some(coordinate) = values.get(1) else { continue };
+            let Some(coordinate) = values.get(1) else {
+                continue;
+            };
             let mut parts = coordinate.split(':');
-            if parts.next() != Some("30177") { continue; }
+            if parts.next() != Some("30177") {
+                continue;
+            }
             let Some(owner) = parts.next() else { continue };
             let Some(agent) = parts.next() else { continue };
             if agent.len() == 64
@@ -164,7 +168,10 @@ pub(crate) fn relay_agents_from_events(
         agents.push(RelayAgentInfo {
             pubkey: pubkey.clone(),
             name: content.name,
-            owner_pubkey: verified_owners.get(&pubkey).cloned().or_else(|| deleted.get(&pubkey).cloned()),
+            owner_pubkey: verified_owners
+                .get(&pubkey)
+                .cloned()
+                .or_else(|| deleted.get(&pubkey).cloned()),
             deleted: deleted.contains_key(&pubkey),
             agent_type: "agent".to_string(),
             channels: Vec::new(),
@@ -180,7 +187,9 @@ pub(crate) fn relay_agents_from_events(
     // refresh. Keep a useful historical row so a newly-created same-name agent
     // cannot be confused with the retired identity.
     for (pubkey, owner) in deleted {
-        if agent_indexes.contains_key(&pubkey) { continue; }
+        if agent_indexes.contains_key(&pubkey) {
+            continue;
+        }
         let name = agents
             .iter()
             .find(|agent| agent.pubkey.eq_ignore_ascii_case(&pubkey))
@@ -316,10 +325,13 @@ mod tests {
         let owner_keys = Keys::generate();
         let agent_pubkey = agent_keys.public_key().to_hex();
         let owner_pubkey = owner_keys.public_key().to_hex();
-        let identity_profile = oa_profile_event_for(&agent_keys, &owner_keys, r#"{"name":"Old Debug"}"#);
+        let identity_profile =
+            oa_profile_event_for(&agent_keys, &owner_keys, r#"{"name":"Old Debug"}"#);
         let coordinate = format!("30177:{owner_pubkey}:{agent_pubkey}");
         let deletion = EventBuilder::new(Kind::Custom(5), "")
-            .tags(vec![Tag::parse(["a", coordinate.as_str()]).expect("parse coordinate")])
+            .tags(vec![
+                Tag::parse(["a", coordinate.as_str()]).expect("parse coordinate")
+            ])
             .sign_with_keys(&owner_keys)
             .expect("sign deletion");
 
@@ -327,7 +339,10 @@ mod tests {
 
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].name, "Old Debug");
-        assert_eq!(agents[0].owner_pubkey.as_deref(), Some(owner_pubkey.as_str()));
+        assert_eq!(
+            agents[0].owner_pubkey.as_deref(),
+            Some(owner_pubkey.as_str())
+        );
         assert!(agents[0].deleted);
     }
 }

@@ -62,8 +62,8 @@ pub async fn send_agent_handoff(
         .map_err(|error| format!("invalid handoff: {error}"))?;
     let event_id = event.id.to_hex();
     submit_signed_event_with_keys(&event, &state, &keys, None)
-    .await
-    .map_err(|error| format!("failed to publish handoff: {error}"))?;
+        .await
+        .map_err(|error| format!("failed to publish handoff: {error}"))?;
     Ok(event_id)
 }
 
