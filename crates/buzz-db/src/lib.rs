@@ -1332,9 +1332,9 @@ impl Db {
             LIMIT 1
             "#,
         )
-            .bind(normalized_host)
-            .fetch_optional(&self.pool)
-            .await?;
+        .bind(normalized_host)
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(|row| {
             Ok(CommunityRecord {
                 id: CommunityId::from_uuid(row.try_get("id")?),

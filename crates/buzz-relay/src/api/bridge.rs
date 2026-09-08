@@ -266,10 +266,7 @@ pub(crate) fn nip42_expected_relay_url(config_relay_url: &str, tenant: &TenantCo
 }
 
 /// Construct the NIP-42 URL using the protocol seen by the client.
-pub(crate) fn nip42_expected_relay_url_for_scheme(
-    scheme: &str,
-    tenant: &TenantContext,
-) -> String {
+pub(crate) fn nip42_expected_relay_url_for_scheme(scheme: &str, tenant: &TenantContext) -> String {
     format!("{scheme}://{}", tenant.host())
 }
 
@@ -2134,12 +2131,8 @@ async fn authorize_moderation_read(
         Some(q) if !q.is_empty() => format!("{path}?{q}"),
         _ => path.to_string(),
     };
-    let url = nip98_expected_url_for_headers(
-        &state.config.relay_url,
-        &tenant,
-        &path_with_query,
-        headers,
-    );
+    let url =
+        nip98_expected_url_for_headers(&state.config.relay_url, &tenant, &path_with_query, headers);
     let (pubkey, event_id_bytes) =
         verify_bridge_auth(headers, "GET", &url, None, state.config.require_auth_token)?;
     check_nip98_replay(state, &tenant, event_id_bytes).await?;
