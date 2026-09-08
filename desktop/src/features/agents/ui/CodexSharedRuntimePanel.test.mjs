@@ -116,6 +116,18 @@ test("conflict takeover requires confirmation and refreshes status", async (t) =
   );
 
   await screen.findByText("Codex Desktop runtime conflict");
+  assert.match(
+    screen.getByTestId("codex-runtime-shared").textContent,
+    /Shared app-server.*Running/,
+  );
+  assert.match(
+    screen.getByTestId("codex-runtime-desktop").textContent,
+    /Codex Desktop GUI.*PID 100.*Running/,
+  );
+  assert.match(
+    screen.getByTestId("codex-runtime-conflict").textContent,
+    /Private Desktop app-server.*PID 101.*Conflict/,
+  );
   const takeover = screen.getByRole("button", {
     name: "Start Codex Desktop",
   });
@@ -136,6 +148,11 @@ test("conflict takeover requires confirmation and refreshes status", async (t) =
   await waitFor(() => assert.equal(takeoverCalls, 1));
   await screen.findByText("Codex shared runtime connected");
   assert.equal(screen.queryByText("Codex Desktop runtime conflict"), null);
+  assert.match(
+    screen.getByTestId("codex-runtime-desktop").textContent,
+    /PID 200.*Running/,
+  );
+  assert.equal(screen.queryByTestId("codex-runtime-conflict"), null);
 });
 
 test("setup installs Codex ACP before enabling the shared runtime", async (t) => {

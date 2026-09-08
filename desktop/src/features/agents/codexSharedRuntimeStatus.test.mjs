@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  getCodexRuntimeIndicator,
   hasCodexDesktopRuntimeConflict,
   isCodexSharedRuntimeUsable,
 } from "./codexSharedRuntimeStatus.ts";
@@ -34,4 +35,27 @@ test("ready is usable only after process detection succeeds", () => {
     ),
     false,
   );
+});
+
+test("summarizes the computer-level Codex runtime for the Agents toolbar", () => {
+  assert.deepEqual(getCodexRuntimeIndicator(undefined, true), {
+    label: "Checking Codex...",
+    state: "checking",
+  });
+  assert.deepEqual(
+    getCodexRuntimeIndicator(status({ desktopProcessIds: [100] })),
+    { label: "Codex running here", state: "running" },
+  );
+  assert.deepEqual(getCodexRuntimeIndicator(status()), {
+    label: "Start Codex Desktop",
+    state: "ready",
+  });
+  assert.deepEqual(
+    getCodexRuntimeIndicator(status({ privateAppServerProcessIds: [101] })),
+    { label: "Codex runtime conflict", state: "warning" },
+  );
+  assert.deepEqual(getCodexRuntimeIndicator(status({ state: "unavailable" })), {
+    label: "Codex runtime unavailable",
+    state: "warning",
+  });
 });

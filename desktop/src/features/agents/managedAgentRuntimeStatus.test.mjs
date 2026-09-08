@@ -6,6 +6,8 @@ import {
   agentCommunityStatusDetail,
   canonicalRelayUrl,
   findManagedAgentRuntime,
+  formatRuntimeElapsed,
+  isCodexTaskRuntimeRestoring,
   managedAgentRuntimeKey,
 } from "./managedAgentRuntimeStatus.ts";
 
@@ -60,6 +62,44 @@ test("pair key cannot collide at component boundaries", () => {
     managedAgentRuntimeKey(runtime({ pubkey: "ab", relayUrl: "c" })),
     managedAgentRuntimeKey(runtime({ pubkey: "a", relayUrl: "bc" })),
   );
+});
+
+test("only a starting task-bound runtime is shown as restoring", () => {
+  assert.equal(
+    isCodexTaskRuntimeRestoring(
+      { codexTaskBinding: { taskId: "task" } },
+      runtime({ lifecycle: "starting" }),
+    ),
+    true,
+  );
+  assert.equal(
+    isCodexTaskRuntimeRestoring(
+      { codexTaskBinding: { taskId: "task" } },
+      runtime({ lifecycle: "ready" }),
+    ),
+    false,
+  );
+  assert.equal(
+    isCodexTaskRuntimeRestoring(
+      { codexTaskBinding: null },
+      runtime({ lifecycle: "starting" }),
+    ),
+    false,
+  );
+});
+
+test("formats task restore elapsed time without going negative", () => {
+  const startedAt = "2026-09-08T00:00:00.000Z";
+  assert.equal(formatRuntimeElapsed(startedAt, Date.parse(startedAt)), "0s");
+  assert.equal(
+    formatRuntimeElapsed(startedAt, Date.parse(startedAt) + 83_000),
+    "1m 23s",
+  );
+  assert.equal(
+    formatRuntimeElapsed(startedAt, Date.parse(startedAt) - 5_000),
+    "0s",
+  );
+  assert.equal(formatRuntimeElapsed("not-a-date", Date.now()), null);
 });
 
 test("selects one relay without collapsing same-pubkey pairs", () => {

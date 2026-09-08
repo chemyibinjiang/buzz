@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+use super::codex_app_tools;
 use super::codex_tasks::current_codex_shared_app_server_url;
 use super::{atomic_write_json_restricted, managed_agents_base_dir};
 
@@ -88,7 +89,7 @@ pub struct CodexSharedRuntimeStatus {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct WindowsProcessInfo {
+pub(super) struct WindowsProcessInfo {
     process_id: u32,
     parent_process_id: u32,
     executable_path: String,
@@ -901,11 +902,16 @@ fn managed_codex_app_server_executable(
     )
 }
 
-fn codex_shared_runtime_args(url: &str, code_mode_host_available: bool) -> Vec<String> {
-    let mut args = Vec::with_capacity(if code_mode_host_available { 5 } else { 3 });
+fn codex_shared_runtime_args(
+    url: &str,
+    code_mode_host_available: bool,
+    codex_app_transport: &str,
+) -> Vec<String> {
+    let mut args = Vec::with_capacity(if code_mode_host_available { 7 } else { 5 });
     if code_mode_host_available {
         args.extend(["-c".to_string(), CODEX_CODE_MODE_HOST_FLAG.to_string()]);
     }
+    args.extend(["-c".to_string(), codex_app_transport.to_string()]);
     args.extend([
         "app-server".to_string(),
         "--listen".to_string(),
@@ -949,6 +955,7 @@ fn spawn_codex_shared_runtime(app: &AppHandle, url: &str) -> Result<u32, String>
     #[cfg(not(windows))]
     let executable = source_executable;
     let code_mode_host_available = codex_code_mode_host_available(&executable);
+    let codex_app_transport = codex_app_tools::shared_runtime_transport_config(app)?;
 
     #[cfg(windows)]
     {
@@ -982,7 +989,11 @@ fn spawn_codex_shared_runtime(app: &AppHandle, url: &str) -> Result<u32, String>
             .open(&stderr_log)
             .map_err(|error| format!("failed to open {}: {error}", stderr_log.display()))?;
         let child = Command::new(&executable)
-            .args(codex_shared_runtime_args(url, code_mode_host_available))
+            .args(codex_shared_runtime_args(
+                url,
+                code_mode_host_available,
+                &codex_app_transport,
+            ))
             .current_dir(working_directory)
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
@@ -1057,6 +1068,7 @@ fn spawn_codex_shared_runtime(app: &AppHandle, url: &str) -> Result<u32, String>
             .args(codex_shared_runtime_args(
                 url,
                 codex_code_mode_host_available(&executable),
+                &codex_app_transport,
             ))
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
@@ -1196,44 +1208,7 @@ pub async fn restore_codex_runtime(app: AppHandle) {
 }
 
 #[cfg(windows)]
-fn launch_codex_desktop_shared_unchecked(url: &str) -> Result<WindowsProcessInfo, String> {
-    use std::os::windows::process::CommandExt;
-
-    const SCRIPT: &str = r#"
-$ErrorActionPreference='Stop'
-$env:CODEX_APP_SERVER_WS_URL=$env:BUZZ_CODEX_DESKTOP_SHARED_URL
-$package=Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object @{Expression={if ($_.Name -eq 'OpenAI.Codex') {0} else {1}};Ascending=$true},@{Expression={$_.Version};Descending=$true} | Select-Object -First 1
-if (-not $package) { throw 'Codex Desktop is not installed' }
-$application=@((Get-AppxPackageManifest -Package $package).Package.Applications.Application)[0]
-$exe=[IO.Path]::GetFullPath((Join-Path $package.InstallLocation ([string]$application.Executable)))
-$process=Start-Process -FilePath $exe -PassThru
-[pscustomobject]@{
-  process_id=[uint32]$process.Id
-  parent_process_id=0
-  executable_path=$exe
-  command_line=''
-} | ConvertTo-Json -Compress
-"#;
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-        .env("BUZZ_CODEX_DESKTOP_SHARED_URL", url)
-        .creation_flags(0x0800_0000)
-        .output()
-        .map_err(|error| format!("failed to launch Codex Desktop: {error}"))?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if detail.is_empty() {
-            "Windows could not launch Codex Desktop".to_string()
-        } else {
-            detail
-        });
-    }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("could not read the launched Codex Desktop process: {error}"))
-}
-
-#[cfg(windows)]
-fn terminate_verified_windows_process(
+pub(super) fn terminate_verified_windows_process(
     process: &WindowsProcessInfo,
     include_tree: bool,
 ) -> Result<(), String> {
@@ -1275,7 +1250,10 @@ pub fn launch_codex_desktop_shared(app: &AppHandle) -> Result<(), String> {
     let url = current_codex_shared_app_server_url(app)?;
     let snapshot = snapshot_codex_desktop_processes(&url)?;
     ensure_ordinary_desktop_launch_allowed(&snapshot)?;
-    launch_codex_desktop_shared_unchecked(&url).map(|_| ())
+    if !snapshot.desktop_processes.is_empty() {
+        return Ok(());
+    }
+    codex_app_tools::launch_codex_desktop(app, &url).map(|_| ())
 }
 
 #[cfg(not(windows))]
@@ -1366,10 +1344,12 @@ pub async fn take_over_codex_desktop_shared(
         })?;
 
         let launch_url = url.clone();
-        let launched =
-            tokio::task::spawn_blocking(move || launch_codex_desktop_shared_unchecked(&launch_url))
-                .await
-                .map_err(|error| format!("Codex Desktop launch task failed: {error}"))??;
+        let launch_app = app.clone();
+        let launched = tokio::task::spawn_blocking(move || {
+            codex_app_tools::launch_codex_desktop(&launch_app, &launch_url)
+        })
+        .await
+        .map_err(|error| format!("Codex Desktop launch task failed: {error}"))??;
 
         let mut stable_desktop_checks = 0u8;
         for _ in 0..50 {
@@ -1525,19 +1505,24 @@ mod tests {
 
     #[test]
     fn shared_runtime_launch_args_enable_code_mode_host() {
+        const TRANSPORT: &str = r#"mcp_servers.codex_app={command="cmd.exe",enabled=true}"#;
         assert_eq!(
-            codex_shared_runtime_args(DEFAULT_CODEX_SHARED_APP_SERVER_URL, true),
+            codex_shared_runtime_args(DEFAULT_CODEX_SHARED_APP_SERVER_URL, true, TRANSPORT),
             vec![
                 "-c",
                 CODEX_CODE_MODE_HOST_FLAG,
+                "-c",
+                TRANSPORT,
                 "app-server",
                 "--listen",
                 DEFAULT_CODEX_SHARED_APP_SERVER_URL,
             ]
         );
         assert_eq!(
-            codex_shared_runtime_args(DEFAULT_CODEX_SHARED_APP_SERVER_URL, false),
+            codex_shared_runtime_args(DEFAULT_CODEX_SHARED_APP_SERVER_URL, false, TRANSPORT),
             vec![
+                "-c",
+                TRANSPORT,
                 "app-server",
                 "--listen",
                 DEFAULT_CODEX_SHARED_APP_SERVER_URL,

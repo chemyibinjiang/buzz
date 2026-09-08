@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { RawCodexSharedRuntimeStatus } from "../../src/shared/api/codexTaskTypes";
 import type { ChannelTemplate, RelayEvent } from "../../src/shared/api/types";
 import type { MockManagedAgentSeed } from "../../src/testing/e2eBridge";
 import { FEATURE_OVERRIDES_STORAGE_KEY, PREVIEW_FEATURE_IDS } from "./features";
@@ -187,6 +188,7 @@ type MockBridgeOptions = {
   /** Catalog responses for successive discovery calls. The final response repeats. */
   acpRuntimesCatalogSequence?: Record<string, unknown>[][];
   acpRuntimesDelayMs?: number;
+  codexSharedRuntimeStatus?: RawCodexSharedRuntimeStatus;
   /** When true, the mock catalog discovery command throws an error. */
   acpRuntimesError?: boolean;
   acpAuthMethods?: Record<string, { methods: Record<string, unknown>[] }>;

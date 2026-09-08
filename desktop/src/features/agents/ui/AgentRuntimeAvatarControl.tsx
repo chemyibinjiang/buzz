@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, Square } from "lucide-react";
 import { useReducedMotion } from "motion/react";
 
 import {
@@ -18,11 +18,14 @@ type AgentRuntimeAvatarControlProps = {
   errorLabel?: string | null;
   errorTestId?: string;
   isActive: boolean;
+  isCancelling?: boolean;
   isRestarting?: boolean;
+  isRestoring?: boolean;
   isStarting: boolean;
   label: string;
   requiresRestart?: boolean;
   startTestId: string;
+  onCancel?: () => void;
   onOpenError?: () => void;
   onStart: () => void;
 };
@@ -139,11 +142,14 @@ export function AgentRuntimeAvatarControl({
   errorLabel,
   errorTestId,
   isActive,
+  isCancelling = false,
   isRestarting = false,
+  isRestoring = false,
   isStarting,
   label,
   requiresRestart = false,
   startTestId,
+  onCancel,
   onOpenError,
   onStart,
 }: AgentRuntimeAvatarControlProps) {
@@ -151,24 +157,29 @@ export function AgentRuntimeAvatarControl({
   const trimmedAvatarUrl = avatarUrl?.trim() || null;
   const isRestartAction = requiresRestart || isRestarting;
   const isConnectAction = actionKind === "connect";
+  const canCancelRestore = isRestoring && !isCancelling && Boolean(onCancel);
   const actionLabel = isRestarting
     ? "Restarting Agent"
-    : isStarting
-      ? isConnectAction
-        ? "Connecting Buzz"
-        : "Starting Agent"
-      : isRestartAction
-        ? "Restart Agent"
-        : isConnectAction
-          ? "Connect Buzz"
-          : "Start Agent";
+    : isCancelling
+      ? "Stopping Agent"
+      : canCancelRestore
+        ? "Cancel Codex task restore"
+        : isStarting
+          ? isConnectAction
+            ? "Connecting Buzz"
+            : "Starting Agent"
+          : isRestartAction
+            ? "Restart Agent"
+            : isConnectAction
+              ? "Connect Buzz"
+              : "Start Agent";
   const actionText = isRestartAction
     ? "Restart"
     : isConnectAction
       ? "Connect Buzz"
       : "Start";
-  const isPending = isStarting || isRestarting;
-  const showRunningDot = isActive && !isRestartAction;
+  const isPending = isStarting || isRestarting || isCancelling;
+  const showRunningDot = isActive && !isRestartAction && !isPending;
   const hasError = !isActive && !isPending && Boolean(errorLabel);
   const errorActionLabel = `${label} has a runtime error. Open runtime details.`;
   const transition = shouldReduceMotion ? { duration: 0 } : MASK_TRANSITION;
@@ -209,9 +220,13 @@ export function AgentRuntimeAvatarControl({
                     : "bg-primary text-primary-foreground hover:bg-primary/90",
               )}
               data-testid={hasError ? errorTestId : startTestId}
-              disabled={isPending}
+              disabled={isPending && !canCancelRestore}
               onClick={(event) => {
                 event.stopPropagation();
+                if (canCancelRestore) {
+                  onCancel?.();
+                  return;
+                }
                 if (hasError) {
                   onOpenError?.();
                   return;
@@ -221,7 +236,9 @@ export function AgentRuntimeAvatarControl({
               title={hasError ? errorLabel || errorActionLabel : actionLabel}
               type="button"
             >
-              {isPending ? (
+              {canCancelRestore ? (
+                <Square aria-hidden="true" className="h-4 w-4" />
+              ) : isPending ? (
                 <Spinner
                   aria-label={actionLabel}
                   className="h-4 w-4 border-2"

@@ -61,6 +61,7 @@ import type {
   RawInstallRuntimeResult,
   RuntimeFileConfigSubset,
 } from "@/shared/api/tauri";
+import type { RawCodexSharedRuntimeStatus } from "@/shared/api/codexTaskTypes";
 import {
   ensureRelayOriginFetch,
   resetMediaCaches,
@@ -239,6 +240,7 @@ type E2eConfig = {
     /** Catalog responses for successive discovery calls. The final response repeats. */
     acpRuntimesCatalogSequence?: RawAcpRuntimeCatalogEntry[][];
     acpRuntimesDelayMs?: number;
+    codexSharedRuntimeStatus?: RawCodexSharedRuntimeStatus;
     /** When true, the catalog discovery call throws — simulates a failed query. */
     acpRuntimesError?: boolean;
     acpAuthMethods?: Record<string, RawAcpAuthMethodsResult>;
@@ -12028,15 +12030,17 @@ export function maybeInstallE2eTauriMocks() {
       case "relay_requires_membership":
         return activeConfig?.mock?.relayRequiresMembership ?? false;
       case "get_codex_shared_runtime_status":
-        return {
-          enabled: true,
-          state: "ready",
-          url: "ws://127.0.0.1:51919",
-          detail: null,
-          desktop_process_ids: [],
-          private_app_server_process_ids: [],
-          desktop_detection_error: null,
-        };
+        return (
+          activeConfig?.mock?.codexSharedRuntimeStatus ?? {
+            enabled: true,
+            state: "ready",
+            url: "ws://127.0.0.1:51919",
+            detail: null,
+            desktop_process_ids: [],
+            private_app_server_process_ids: [],
+            desktop_detection_error: null,
+          }
+        );
       case "launch_codex_desktop_shared":
         return null;
       case "discover_acp_providers":

@@ -1,4 +1,7 @@
-import type { ManagedAgentRuntimeStatus } from "@/shared/api/types";
+import type {
+  ManagedAgent,
+  ManagedAgentRuntimeStatus,
+} from "@/shared/api/types";
 
 export type AgentCommunityAvailability =
   | "Here"
@@ -39,6 +42,26 @@ export function managedAgentRuntimeKey(
   runtime: Pick<ManagedAgentRuntimeStatus, "pubkey" | "relayUrl">,
 ): string {
   return JSON.stringify([runtime.pubkey, runtime.relayUrl]);
+}
+
+export function isCodexTaskRuntimeRestoring(
+  agent: Pick<ManagedAgent, "codexTaskBinding">,
+  runtime: ManagedAgentRuntimeStatus | undefined,
+): boolean {
+  return Boolean(agent.codexTaskBinding && runtime?.lifecycle === "starting");
+}
+
+export function formatRuntimeElapsed(
+  startedAt: string | null,
+  nowMs: number,
+): string | null {
+  if (!startedAt) return null;
+  const startedAtMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedAtMs)) return null;
+  const elapsedSeconds = Math.max(0, Math.floor((nowMs - startedAtMs) / 1000));
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
 export type ManagedAgentPairAction = "start" | "stop" | "restart";

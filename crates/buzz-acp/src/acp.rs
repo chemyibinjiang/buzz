@@ -1290,16 +1290,28 @@ impl AcpClient {
 
     /// Default timeout for non-prompt RPCs (initialize, session/new, etc.).
     const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+    /// Existing sessions can be much larger than new-session handshakes. Codex
+    /// may need several minutes to reopen their persisted rollout before it can
+    /// answer the ACP request.
+    const SESSION_RESTORE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+    fn request_timeout(method: &str) -> std::time::Duration {
+        match method {
+            "session/load" | "session/resume" => Self::SESSION_RESTORE_TIMEOUT,
+            _ => Self::REQUEST_TIMEOUT,
+        }
+    }
 
     /// Send a JSON-RPC request and wait for the matching response.
     ///
     /// Assigns the next available id, writes the NDJSON line to stdin,
     /// then reads until the matching response arrives.
     ///
-    /// The write phase is bounded by `WRITE_TIMEOUT` (30s) and the read phase
-    /// by `REQUEST_TIMEOUT` (60s), so worst-case wall clock is ~90s. Non-prompt
-    /// RPCs like `initialize` and `session/new` should complete in seconds;
-    /// if they don't, the agent is likely stuck and we must not block forever.
+    /// The write phase is bounded by `WRITE_TIMEOUT` (30s). Most read phases use
+    /// `REQUEST_TIMEOUT` (60s); `session/load` and `session/resume` use the
+    /// extended restore timeout because opening a large persisted task can take
+    /// several minutes. All requests remain bounded so a stuck agent cannot
+    /// block forever.
     async fn send_request(
         &mut self,
         method: &str,
@@ -1330,7 +1342,7 @@ impl AcpClient {
         // Wrap write + read in a single timeout so a hung agent can't block forever.
         // We cannot use an async block that borrows `self` mutably across two awaits
         // inside timeout(), so we sequence them with early-return on timeout.
-        let timeout = Self::REQUEST_TIMEOUT;
+        let timeout = Self::request_timeout(method);
         match tokio::time::timeout(timeout, self.write_ndjson(&msg)).await {
             Ok(result) => result?,
             Err(_) => return Err(AcpError::Timeout(timeout)),
@@ -2587,6 +2599,26 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_session_restore_requests_use_extended_timeout() {
+        assert_eq!(
+            AcpClient::request_timeout("initialize"),
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(
+            AcpClient::request_timeout("session/new"),
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(
+            AcpClient::request_timeout("session/load"),
+            std::time::Duration::from_secs(10 * 60)
+        );
+        assert_eq!(
+            AcpClient::request_timeout("session/resume"),
+            std::time::Duration::from_secs(10 * 60)
+        );
+    }
 
     #[test]
     fn stdout_frame_limit_accommodates_long_codex_task_history() {

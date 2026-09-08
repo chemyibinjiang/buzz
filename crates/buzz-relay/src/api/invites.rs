@@ -246,12 +246,8 @@ async fn authenticate(
             )
         })?;
 
-    let url = bridge::nip98_expected_url_for_headers(
-        &state.config.relay_url,
-        &tenant,
-        path,
-        headers,
-    );
+    let url =
+        bridge::nip98_expected_url_for_headers(&state.config.relay_url, &tenant, path, headers);
     let (pubkey, event_id_bytes) = bridge::verify_bridge_auth_with_options(
         headers,
         "POST",

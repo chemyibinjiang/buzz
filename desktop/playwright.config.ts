@@ -53,6 +53,7 @@ export default defineConfig({
         "**/local-archive-screenshots.spec.ts",
         "**/voice-settings.spec.ts",
         "**/agent-readiness-screenshots.spec.ts",
+        "**/codex-runtime-status.spec.ts",
         "**/agent-error-state-screenshots.spec.ts",
         "**/edit-agent.spec.ts",
         "**/doctor-cta-screenshots.spec.ts",

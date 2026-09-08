@@ -1213,13 +1213,8 @@ async fn handle_relay_observer_control_event(
         }
         Some("generate_handoff") => {
             let sender = event.pubkey.to_hex();
-            if !observer_control_author_allowed(
-                "generate_handoff",
-                &sender,
-                true,
-                authorization,
-            )
-            .await
+            if !observer_control_author_allowed("generate_handoff", &sender, true, authorization)
+                .await
             {
                 tracing::warn!(
                     sender = %event.pubkey,
@@ -2268,6 +2263,17 @@ async fn tokio_main() -> Result<()> {
             Ok(_) => tracing::info!("presence set to online"),
             Err(e) => tracing::warn!("failed to set initial presence: {e}"),
         }
+    }
+
+    if !config.lazy_pool {
+        emit_runtime_lifecycle(
+            observer.as_ref(),
+            &runtime_start_nonce,
+            &pubkey_hex,
+            &config.relay_url,
+            "ready",
+            None,
+        );
     }
 
     if !config.memory_enabled {
