@@ -372,7 +372,7 @@
 - 诊断：Relay 数据库确认任务 `af7f5542-b9a9-4e66-bcb5-6e311b2f0607` 已于 21:33 保存，并按 3 分钟周期持续生成 `completed` run；任务属于 DM 频道。总列表此前先读取 Desktop 本地 `isMember` 频道投影，再把这些频道 ID 拼成 `#h` 查询；隐藏 DM、频道元数据延迟或本地投影缺失会让真实存在的 Workflow 被查询范围排除。
 - 处理：新增“当前身份可访问的全部 Workflow”Tauri 查询，总列表直接依赖 Relay 的权威频道访问范围，不再以本地频道列表决定 Workflow 是否可见；本地频道数据只用于补充频道名称。创建和编辑频道选择仍只展示本地有效成员频道。
 - 验证：`cargo check --manifest-path desktop/src-tauri/Cargo.toml` 通过（仅有仓库既有的未使用代码警告）；Desktop TypeScript `tsc --noEmit`、目标文件 Biome、`pnpm build:e2e` 通过；定时任务 Playwright smoke 回归 4/4 通过，新增用例确认本地频道投影不参与总列表查询。`cargo fmt --check` 仍被工作区其他既有、非本轮文件的格式差异阻断，本轮改动未扩大该差异。
-- 版本/提交：`Lin/develop` 当前工作区，待提交。
+- 版本/提交：Buzz Codex Lab `0.5.19-heartbeat-conversation-fix`，功能提交 `cef61bf2`。
 
 ## 2026-10-14：Heartbeat 结果只出现在 Inbox，原 Agent 私聊时间线不可见
 
@@ -380,4 +380,4 @@
 - 诊断：真实 Relay 事件确认 kind:40009 定时指令和 Agent kind:9 回复均属于同一个 DM；但自动交付把回复加成了对 kind:40009 的 NIP-10 thread reply。kind:40009 是仅供 Agent 消费、Desktop 不渲染的隐藏事件，因此回复挂在一个不可见的 thread root 下，普通 DM 时间线排除了它，而 Inbox 仍会因 `p` 提及展示通知。
 - 处理：task-bound Agent 遇到定时指令时将最终答案发布为当前频道的顶层 kind:9 消息，不再回复隐藏的 kind:40009；结果继续携带 Workflow ID 与 scheduled-task 来源标签。普通聊天消息和可见线程仍保持原有 reply anchoring。非自动交付 Agent 的提示也明确要求定时任务结果和附件作为顶层消息发送。
 - 验证：真实 Relay 数据确认同一 DM 中 kind:40009 触发事件之后的 Agent kind:9 回复带有指向该隐藏事件的 `e/reply` 标签，复现了 Inbox 可见但聊天时间线不可见的路径。新增 4 项聚焦回归，覆盖提示要求顶层交付、task-bound 定时结果无 `e` 标签、缺少 Workflow 标签时仍保持顶层，以及普通消息仍按原规则回复可见触发事件，全部通过；`cargo check -p buzz-acp`、Rustfmt 与 `git diff --check` 通过。完整 `cargo test -p buzz-acp --lib` 在 Windows 因既有测试依赖 Unix `cat` 命令而有 69 项失败（772 项通过）；`cargo clippy -p buzz-acp --lib -- -D warnings` 被 `buzz-core/src/agent_handoff.rs` 的既有 `needless_as_bytes` 告警阻断，均与本轮改动无关。
-- 版本/提交：`Lin/develop` 当前工作区，待提交。
+- 版本/提交：Buzz Codex Lab `0.5.19-heartbeat-conversation-fix`，功能提交 `cef61bf2`。
