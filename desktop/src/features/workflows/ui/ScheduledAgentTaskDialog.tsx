@@ -3,6 +3,7 @@ import * as React from "react";
 import { stringify as yamlStringify } from "yaml";
 import { toast } from "sonner";
 
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import {
   useManagedAgentsQuery,
   useRelayAgentsQuery,
@@ -47,6 +48,7 @@ export function ScheduledAgentTaskDialog({
   const managedAgentsQuery = useManagedAgentsQuery();
   const relayAgentsQuery = useRelayAgentsQuery();
   const createTask = useCreateWorkflowMutation(channel.id);
+  const { goWorkflow, goWorkflows } = useAppNavigation();
   const resetCreateTask = createTask.reset;
   const [name, setName] = React.useState("");
   const [agentPubkey, setAgentPubkey] = React.useState("");
@@ -137,9 +139,10 @@ export function ScheduledAgentTaskDialog({
       ],
     };
     try {
-      await createTask.mutateAsync(yamlStringify(definition));
+      const saved = await createTask.mutateAsync(yamlStringify(definition));
       toast.success("Scheduled Agent task created");
       onOpenChange(false);
+      void goWorkflow(saved.workflow.id);
     } catch {
       // React Query retains the error for the inline diagnostic below.
     }
@@ -266,23 +269,37 @@ export function ScheduledAgentTaskDialog({
             </p>
           ) : null}
         </div>
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex items-center justify-between gap-2 pt-2">
           <Button
+            data-testid="view-scheduled-tasks"
             disabled={createTask.isPending}
-            onClick={() => onOpenChange(false)}
+            onClick={() => {
+              onOpenChange(false);
+              void goWorkflows();
+            }}
             type="button"
-            variant="outline"
-            className="rounded-full"
+            variant="ghost"
           >
-            Cancel
+            View scheduled tasks
           </Button>
-          <Button
-            disabled={!canSubmit}
-            onClick={() => void handleSubmit()}
-            className="rounded-full"
-          >
-            {createTask.isPending ? "Creating…" : "Create"}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              disabled={createTask.isPending}
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="outline"
+              className="rounded-full"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!canSubmit}
+              onClick={() => void handleSubmit()}
+              className="rounded-full"
+            >
+              {createTask.isPending ? "Creating…" : "Create"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

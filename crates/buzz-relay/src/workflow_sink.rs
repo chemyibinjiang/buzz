@@ -475,17 +475,14 @@ impl ActionSink for RelayActionSink {
                     "scheduled Agent is no longer a member of the workflow channel".into(),
                 ));
             }
-            let is_registered_agent = state
-                .db
-                .get_agent_channel_policy(tenant.community(), &agent.to_bytes())
-                .await
-                .map_err(|e| ActionSinkError::Database(e.to_string()))?
-                .is_some_and(|(_, owner)| owner.is_some());
-            if !is_registered_agent {
-                return Err(ActionSinkError::InvalidInput(
-                    "scheduled target is not a registered Agent".into(),
-                ));
-            }
+            // Channel membership is the delivery boundary. Desktop-managed
+            // Agents can be active channel members before (or without) a
+            // relay-side `agent_owner_pubkey` registration row. Requiring that
+            // second, unrelated record made valid scheduled tasks fail even
+            // while the target Agent was online and responding in the channel.
+            // The relay-only event is p-tagged to exactly this member; ordinary
+            // human clients ignore kind 40009, while ACP validates the target
+            // mention and the authenticated `created_by` instruction policy.
 
             let event = build_scheduled_agent_prompt_event(
                 &state.relay_keypair,
@@ -942,5 +939,100 @@ mod integration_tests {
             p_tag_targets.contains(&agent_hex.as_str()),
             "mentioned member {agent_hex} must be p-tagged so it wakes; got {p_tag_targets:?}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn scheduled_prompt_accepts_active_member_without_agent_owner_registration() {
+        let state = test_state().await;
+
+        let creator = nostr::Keys::generate();
+        let creator_hex = creator.public_key().to_hex();
+        let target = nostr::Keys::generate();
+        let target_hex = target.public_key().to_hex();
+        let target_bytes = target.public_key().to_bytes().to_vec();
+
+        let host = format!("wf-scheduled-{}.example", uuid::Uuid::new_v4().simple());
+        let community = match state
+            .db
+            .create_community_with_owner(&host, &creator_hex)
+            .await
+            .expect("create community")
+        {
+            CreateCommunityWithOwnerResult::Created(rec) => rec.id,
+            other => panic!("expected fresh community, got {other:?}"),
+        };
+        let channel = state
+            .db
+            .create_channel(
+                community,
+                "scheduled-member",
+                ChannelType::Stream,
+                ChannelVisibility::Open,
+                None,
+                &creator.public_key().to_bytes(),
+                None,
+            )
+            .await
+            .expect("create channel");
+
+        // Reproduce Desktop-managed Agents: a normal active membership exists,
+        // but no relay-side owner registration has been written for the pubkey.
+        state
+            .db
+            .ensure_user(community, &target_bytes)
+            .await
+            .expect("ensure target user");
+        state
+            .db
+            .add_member(
+                community,
+                channel.id,
+                &target_bytes,
+                MemberRole::Member,
+                Some(&creator.public_key().to_bytes()),
+            )
+            .await
+            .expect("add target member");
+        assert!(
+            state
+                .db
+                .get_agent_channel_policy(community, &target_bytes)
+                .await
+                .expect("read agent policy")
+                .is_some_and(|(_, owner)| owner.is_none()),
+            "fixture must not accidentally register an Agent owner"
+        );
+
+        let sink = RelayActionSink::new(&state);
+        let event_id = sink
+            .prompt_agent(ScheduledAgentPrompt {
+                community_id: community,
+                channel_id: &channel.id.to_string(),
+                agent_pubkey: &target_hex,
+                creator_pubkey: &creator_hex,
+                workflow_id: Uuid::new_v4(),
+                workflow_name: "Member target",
+                source_kind: "channel_user",
+                source_event_id: None,
+                prompt: "Report status",
+            })
+            .await
+            .expect("active member should receive the scheduled prompt");
+
+        let id_bytes = nostr::EventId::from_hex(&event_id)
+            .expect("event id")
+            .as_bytes()
+            .to_vec();
+        let stored = state
+            .db
+            .get_event_by_id(community, &id_bytes)
+            .await
+            .expect("query event")
+            .expect("event persisted");
+        assert!(stored.event.tags.iter().any(|tag| {
+            tag.as_slice().first().map(String::as_str) == Some("p")
+                && tag.as_slice().get(1).map(String::as_str) == Some(target_hex.as_str())
+        }));
     }
 }

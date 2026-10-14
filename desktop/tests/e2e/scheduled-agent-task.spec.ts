@@ -75,6 +75,7 @@ test("daily task defaults to local 9am without requiring a task name", async ({
   });
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
   await expect(dialog).not.toBeVisible();
+  await expect(page.getByTestId("workflows-view")).toBeVisible();
   const { definition } = await savedDefinition(page);
   expect(definition.name).toBe("Check build status");
   expect(definition.trigger.calendar).toMatchObject({

@@ -357,3 +357,11 @@
 - 验证：`buzz-workflow` 165 项单元测试通过（2 项 Postgres 测试 ignored），覆盖北京时间、跨月每两天、每两周、夏令时和序列化互斥；workflow Clippy no-deps、Rust fmt、Relay/ACP cargo check、Desktop typecheck、25 个相关文件 Biome 与文本字号检查通过。前端 8 项测试、新增 3 项 Playwright 弹窗测试及现有 9 项 Workflow 测试通过；截图核对每日和自定义星期界面。界面测试使用 mock Relay，尚未验证真实 Relay 到期后 Agent 回复。
 - 检查限制：当前 Windows Hermit bootstrap 失败且无可用 `just`、Postgres/Redis 工具，未完成 `just ci` / `just test`。包含依赖的 Clippy 被既有 `buzz-core/src/agent_handoff.rs` 警告阻断，全仓 Desktop 文件长度门禁也被其他已有超限文件阻断，本次新日历/弹窗文件未超限。实际定时执行需同步升级 Relay。
 - 版本/提交：`0.5.19`，`Lin/develop` 当前工作区，未提交；本轮未生成安装包。
+
+## 2026-10-14：定时 Agent 任务已保存但无法查看且每次执行失败
+
+- 现象：频道内可成功创建 Heartbeat / 定时任务，但弹窗关闭后没有明确的查看入口，目标 Agent 也没有按时响应。
+- 诊断：Relay 数据库确认两个 5 分钟任务均已持久化，调度器也按期创建了 7 次 run；所有 run 都失败于 `scheduled target is not a registered Agent`。目标 pubkey 实际是活跃频道成员并能正常回复，但 Desktop-managed Agent 没有 Relay `agent_owner_pubkey` 记录，调度发送路径错误地把两种身份记录当成必须同时存在。UI 创建成功后只显示短暂 toast，没有跳转任务详情。
+- 处理：定时指令的 Relay 交付边界改为“目标仍是当前频道活跃成员”，不再要求无关的 `agent_owner_pubkey`；kind 40009 仍为 Relay-only、精确 `p` 标记目标，ACP 仍验证 `created_by` 和 Agent 的指令权限。创建成功后直接跳转新任务详情，弹窗也增加 `View scheduled tasks` 入口，便于查看执行历史和失败原因。
+- 验证：Relay `workflow_sink` 聚焦单元测试 18/18 通过，`cargo check -p buzz-relay` 通过；新增 Postgres 回归用例覆盖“频道成员存在但 owner 注册为空”的 Desktop-managed Agent（本地无 Postgres，按约定保持 ignored）。Desktop 定时任务 helper 测试 8/8、TypeScript typecheck、目标文件 Biome 检查，以及 E2E 弹窗测试 3/3 均通过；E2E 覆盖创建任务后进入 Workflow 查看页。真实 Relay 数据库与日志已确认修复前任务按期产生 run、失败原因统一为错误的 Agent 注册门槛。
+- 版本/提交：Buzz Codex Lab `0.5.19`，随本条修复提交至 `Lin/develop`。
