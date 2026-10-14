@@ -131,6 +131,28 @@ pub async fn get_channels_workflows(
     Ok(events.iter().map(workflow_from_event).collect())
 }
 
+/// Fetch every workflow visible to the current identity.
+///
+/// The relay applies the authenticated identity's accessible-channel scope to
+/// an unscoped historical query. This is deliberately independent of the
+/// Desktop channel projection: a DM can be hidden locally or its metadata can
+/// arrive after its workflow definition, but that must not make a persisted
+/// scheduled task disappear from the Workflows overview.
+#[tauri::command]
+pub async fn get_accessible_workflows(
+    state: State<'_, AppState>,
+) -> Result<Vec<WorkflowWire>, String> {
+    let events = query_relay(
+        &state,
+        &[serde_json::json!({
+            "kinds": [30620],
+        })],
+    )
+    .await?;
+
+    Ok(events.iter().map(workflow_from_event).collect())
+}
+
 #[tauri::command]
 pub async fn get_workflow(
     workflow_id: String,

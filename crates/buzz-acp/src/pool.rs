@@ -5097,11 +5097,75 @@ async fn fetch_channel_member_profiles(
     parse_kind0_profile_lookup(profiles)
 }
 
+fn scheduled_workflow_id(trigger: &nostr::Event) -> Option<&str> {
+    trigger.tags.iter().find_map(|tag| {
+        let parts = tag.as_slice();
+        (parts.first().map(String::as_str) == Some("workflow"))
+            .then(|| parts.get(1).map(String::as_str))
+            .flatten()
+    })
+}
+
+fn build_task_bound_final_answer(
+    channel_id: Uuid,
+    content: &str,
+    trigger: &nostr::Event,
+    mention_pubkeys: &[String],
+) -> Result<nostr::EventBuilder, String> {
+    let is_scheduled = trigger.kind.as_u16() as u32 == buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT;
+    let workflow_id = if is_scheduled {
+        scheduled_workflow_id(trigger)
+    } else {
+        None
+    };
+    let thread_ref = if is_scheduled {
+        None
+    } else {
+        let thread_tags = crate::queue::parse_thread_tags(trigger);
+        let root_id = thread_tags
+            .root_event_id
+            .as_deref()
+            .and_then(|id| nostr::EventId::from_hex(id).ok())
+            .unwrap_or(trigger.id);
+        Some(buzz_sdk::ThreadRef {
+            root_event_id: root_id,
+            parent_event_id: root_id,
+        })
+    };
+    let mentions = mention_pubkeys
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut builder = buzz_sdk::build_message(
+        channel_id,
+        content,
+        thread_ref.as_ref(),
+        &mentions,
+        false,
+        &[],
+    )
+    .map_err(|error| error.to_string())?;
+    if is_scheduled {
+        let source_tag =
+            nostr::Tag::parse(["source", "scheduled_task"]).map_err(|error| error.to_string())?;
+        builder = builder.tag(source_tag);
+        if let Some(workflow_id) = workflow_id {
+            let workflow_tag =
+                nostr::Tag::parse(["workflow", workflow_id]).map_err(|error| error.to_string())?;
+            builder = builder.tag(workflow_tag);
+        }
+    }
+    Ok(builder)
+}
+
 /// Publish the final ACP answer for a task-bound Codex identity.
 ///
 /// The harness already owns this managed agent's signing key. Keeping delivery
 /// here avoids placing a per-agent private key in the long-lived shared Codex
 /// app-server while preserving the same flat reply anchoring used by Buzz.
+/// Scheduled-task results are the exception: their trigger is relay-only and
+/// hidden from the normal timeline, so the result must be a visible top-level
+/// message rather than a reply whose root the user cannot open from the chat.
 async fn publish_task_bound_final_answer(
     ctx: &PromptContext,
     source: &PromptSource,
@@ -5123,16 +5187,6 @@ async fn publish_task_bound_final_answer(
         return;
     };
 
-    let thread_tags = crate::queue::parse_thread_tags(trigger);
-    let root_id = thread_tags
-        .root_event_id
-        .as_deref()
-        .and_then(|id| nostr::EventId::from_hex(id).ok())
-        .unwrap_or(trigger.id);
-    let thread_ref = buzz_sdk::ThreadRef {
-        root_event_id: root_id,
-        parent_event_id: root_id,
-    };
     let channel_profiles = if content.contains('@') {
         fetch_channel_member_profiles(*channel_id, &ctx.rest_client).await
     } else {
@@ -5143,23 +5197,14 @@ async fn publish_task_bound_final_answer(
         channel_profiles.as_ref().or(profiles),
         &ctx.rest_client.keys.public_key().to_hex(),
     );
-    let builder = match buzz_sdk::build_message(
-        *channel_id,
-        content,
-        Some(&thread_ref),
-        &mention_pubkeys
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        false,
-        &[],
-    ) {
-        Ok(builder) => builder,
-        Err(error) => {
-            tracing::warn!(channel = %channel_id, "task-bound reply build failed: {error}");
-            return;
-        }
-    };
+    let builder =
+        match build_task_bound_final_answer(*channel_id, content, trigger, &mention_pubkeys) {
+            Ok(builder) => builder,
+            Err(error) => {
+                tracing::warn!(channel = %channel_id, "task-bound reply build failed: {error}");
+                return;
+            }
+        };
     let event = match builder.sign_with_keys(&ctx.rest_client.keys) {
         Ok(event) => event,
         Err(error) => {
@@ -6601,6 +6646,99 @@ mod tests {
         )
         .is_empty());
         assert!(task_bound_reply_mentions("@Debug self note", Some(&profiles), sender).is_empty());
+    }
+
+    #[test]
+    fn scheduled_task_bound_answer_is_top_level_and_keeps_workflow_source() {
+        let channel_id = Uuid::new_v4();
+        let channel_id_string = channel_id.to_string();
+        let workflow_id = Uuid::new_v4().to_string();
+        let trigger = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT as u16),
+            "[Scheduled Task]",
+        )
+        .tags([
+            Tag::parse(["h", channel_id_string.as_str()]).unwrap(),
+            Tag::parse(["workflow", workflow_id.as_str()]).unwrap(),
+        ])
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+        let mentioned = Keys::generate().public_key().to_hex();
+
+        let event = build_task_bound_final_answer(
+            channel_id,
+            "scheduled result",
+            &trigger,
+            std::slice::from_ref(&mentioned),
+        )
+        .unwrap()
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+        let tags = event
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice())
+            .collect::<Vec<_>>();
+        let has_tag = |name: &str, value: &str| {
+            tags.iter().any(|tag| {
+                tag.first().map(String::as_str) == Some(name)
+                    && tag.get(1).map(String::as_str) == Some(value)
+            })
+        };
+
+        assert!(tags
+            .iter()
+            .all(|tag| tag.first().map(String::as_str) != Some("e")));
+        assert!(has_tag("workflow", &workflow_id));
+        assert!(has_tag("source", "scheduled_task"));
+        assert!(has_tag("p", &mentioned));
+    }
+
+    #[test]
+    fn scheduled_task_without_workflow_tag_is_still_top_level() {
+        let channel_id = Uuid::new_v4();
+        let trigger = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT as u16),
+            "[Scheduled Task]",
+        )
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+
+        let event = build_task_bound_final_answer(channel_id, "scheduled result", &trigger, &[])
+            .unwrap()
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+
+        assert!(event
+            .tags
+            .iter()
+            .all(|tag| { tag.as_slice().first().map(String::as_str) != Some("e") }));
+        assert!(event.tags.iter().any(|tag| {
+            let parts = tag.as_slice();
+            parts.first().map(String::as_str) == Some("source")
+                && parts.get(1).map(String::as_str) == Some("scheduled_task")
+        }));
+    }
+
+    #[test]
+    fn ordinary_task_bound_answer_still_replies_to_visible_trigger() {
+        let channel_id = Uuid::new_v4();
+        let trigger = EventBuilder::new(Kind::Custom(9), "visible message")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        let trigger_id = trigger.id.to_hex();
+
+        let event = build_task_bound_final_answer(channel_id, "answer", &trigger, &[])
+            .unwrap()
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+
+        assert!(event.tags.iter().any(|tag| {
+            let parts = tag.as_slice();
+            parts.first().map(String::as_str) == Some("e")
+                && parts.get(1).map(String::as_str) == Some(trigger_id.as_str())
+                && parts.get(3).map(String::as_str) == Some("reply")
+        }));
     }
 
     #[test]

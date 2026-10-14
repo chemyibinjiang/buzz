@@ -22,7 +22,7 @@ import { useUsersBatchQuery } from "@/features/profile/hooks";
 import type { Channel, Workflow } from "@/shared/api/types";
 import {
   deleteWorkflow,
-  getChannelsWorkflows,
+  getAccessibleWorkflows,
   triggerWorkflow,
 } from "@/shared/api/tauriWorkflows";
 import { Button } from "@/shared/ui/button";
@@ -89,18 +89,21 @@ export function WorkflowsView({
   const queryClient = useQueryClient();
 
   const memberChannels = channels.filter((c) => c.isMember);
-  const channelIds = memberChannels.map((c) => c.id).sort();
-  const channelIdKey = channelIds.join(",");
+  const channelIdKey = memberChannels
+    .map((c) => c.id)
+    .sort()
+    .join(",");
 
   const allWorkflowsQuery = useQuery({
     queryKey: allWorkflowsQueryKey(channelIdKey),
     queryFn: async () => {
-      // Single batched relay query for all member channels, then group by the
-      // channel_id each workflow carries — replaces the per-channel fanout.
+      // Ask the relay for the identity's authoritative accessible scope rather
+      // than deriving visibility from the local channel projection. Hidden DMs
+      // and briefly delayed channel metadata must not hide persisted tasks.
       const channelNameById = new Map(
         memberChannels.map((channel) => [channel.id, channel.name]),
       );
-      const workflows = await getChannelsWorkflows(channelIds);
+      const workflows = await getAccessibleWorkflows();
       const results: WorkflowWithChannel[] = [];
       for (const workflow of workflows) {
         results.push({
@@ -112,7 +115,6 @@ export function WorkflowsView({
       }
       return results;
     },
-    enabled: memberChannels.length > 0,
     ...workflowListFocusRefetchPolicy,
   });
 

@@ -1674,6 +1674,8 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         }
     };
     let thread_tags = parse_thread_tags(&last_event.event);
+    let is_scheduled_agent_prompt =
+        last_event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT;
     let is_dm = args
         .channel_info
         .map(|ci| ci.channel_type == "dm")
@@ -1744,6 +1746,12 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         args.conversation_context_had_delivered_events,
         reply_anchor.as_deref(),
     ));
+    if is_scheduled_agent_prompt {
+        sections.push(
+            "[Scheduled Task Delivery]\nPublish the result as a new top-level message in this channel so it remains visible in the normal conversation timeline. Do not use `--reply-to` with the hidden scheduled-task event. If you send files through `buzz messages send`, keep those sends top-level too."
+                .to_string(),
+        );
+    }
 
     // 3. Conversation context (thread or DM).
     if let Some(ctx) = args.conversation_context {
@@ -4589,6 +4597,45 @@ mod tests {
             !prompt.contains("--reply-to"),
             "DM non-reply should NOT include reply instruction"
         );
+    }
+
+    #[test]
+    fn scheduled_agent_prompt_requires_visible_top_level_delivery() {
+        let ch = Uuid::new_v4();
+        let event = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT as u16),
+            "[Scheduled Task]\nDo the work",
+        )
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+        let batch = FlushBatch {
+            channel_id: ch,
+            events: vec![BatchEvent {
+                event,
+                prompt_tag: "scheduled_task".into(),
+                received_at: Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+        let ci = PromptChannelInfo {
+            name: "DM".into(),
+            channel_type: "dm".into(),
+            description: None,
+        };
+
+        let prompt = format_prompt(
+            &batch,
+            &FormatPromptArgs {
+                channel_info: Some(&ci),
+                ..Default::default()
+            },
+        )
+        .join("\n\n");
+
+        assert!(prompt.contains("[Scheduled Task Delivery]"));
+        assert!(prompt.contains("new top-level message"));
+        assert!(prompt.contains("Do not use `--reply-to`"));
     }
 
     #[test]

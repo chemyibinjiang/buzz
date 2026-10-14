@@ -844,6 +844,7 @@ pub fn run() {
             confirm_team_snapshot_import,
             get_channel_workflows,
             get_channels_workflows,
+            get_accessible_workflows,
             get_workflow,
             create_workflow,
             update_workflow,

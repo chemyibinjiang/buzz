@@ -170,3 +170,27 @@ test("heartbeat blocks zero intervals and saves the requested minutes", async ({
   const { definition } = await savedDefinition(page);
   expect(definition.trigger).toEqual({ on: "schedule", interval: "5m" });
 });
+
+test("scheduled tasks remain listed through the relay-wide accessible query", async ({
+  page,
+}) => {
+  const dialog = page.getByRole("dialog", { name: "Schedule a task" });
+  await dialog
+    .getByLabel("Instructions", { exact: true })
+    .fill("Keep this task visible even if its channel projection is delayed.");
+  await dialog.locator("#task-repeat").selectOption("heartbeat");
+  await dialog.getByLabel("Every", { exact: true }).fill("3");
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+
+  await expect(page.getByTestId("workflows-view")).toContainText(
+    "Keep this task visible",
+  );
+  const usedAccessibleQuery = await page.evaluate(() =>
+    Boolean(
+      window.__BUZZ_E2E_COMMAND_LOG__?.some(
+        (entry) => entry.command === "get_accessible_workflows",
+      ),
+    ),
+  );
+  expect(usedAccessibleQuery).toBe(true);
+});

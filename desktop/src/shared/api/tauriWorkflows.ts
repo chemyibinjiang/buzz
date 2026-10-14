@@ -201,6 +201,19 @@ export async function getChannelsWorkflows(
   return raw.map(fromRawWorkflow);
 }
 
+/**
+ * Fetch every workflow the current relay identity may read.
+ *
+ * Unlike getChannelsWorkflows, this does not depend on the Desktop channel
+ * list being complete. The relay supplies the authoritative channel-access
+ * boundary, so workflows attached to hidden or not-yet-hydrated DMs remain
+ * visible in the overview.
+ */
+export async function getAccessibleWorkflows(): Promise<Workflow[]> {
+  const raw = await invokeTauri<RawWorkflow[]>("get_accessible_workflows");
+  return raw.map(fromRawWorkflow);
+}
+
 export async function getWorkflow(workflowId: string): Promise<Workflow> {
   const raw = await invokeTauri<RawWorkflow>("get_workflow", { workflowId });
   return fromRawWorkflow(raw);
