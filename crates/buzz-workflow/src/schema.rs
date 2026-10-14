@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::calendar::{CalendarFrequency, CalendarSchedule};
 use crate::error::WorkflowError;
 
 /// Top-level workflow definition, authored in YAML and stored as canonical JSON.
@@ -24,6 +25,46 @@ pub struct WorkflowDef {
     /// Whether this workflow is active. Defaults to `true`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Where this workflow was created. Used for human-facing attribution and
+    /// audit without changing the workflow owner's authorization semantics.
+    #[serde(default)]
+    pub source: Option<WorkflowSource>,
+}
+
+/// Human-facing provenance for a workflow definition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowSource {
+    /// Creation surface, for example `channel_user` or `agent_self`.
+    pub kind: WorkflowSourceKind,
+    /// Optional event that requested the workflow creation.
+    #[serde(default)]
+    pub event_id: Option<String>,
+}
+
+/// Auditable workflow creation surfaces.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowSourceKind {
+    /// A user created the task from a channel UI or command.
+    ChannelUser,
+    /// An Agent created a task for itself.
+    AgentSelf,
+    /// Another workflow created this workflow.
+    Workflow,
+    /// A local administrator created the task outside channel chat.
+    LocalAdmin,
+}
+
+impl WorkflowSourceKind {
+    /// Stable wire label used in relay event attribution.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ChannelUser => "channel_user",
+            Self::AgentSelf => "agent_self",
+            Self::Workflow => "workflow",
+            Self::LocalAdmin => "local_admin",
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -54,7 +95,7 @@ pub enum TriggerDef {
         #[serde(default)]
         filter: Option<String>,
     },
-    /// Fires on a cron schedule.
+    /// Fires on a calendar, cron, or interval schedule.
     Schedule {
         /// Cron expression (UTC). Mutually exclusive with `interval`.
         #[serde(default)]
@@ -62,6 +103,9 @@ pub enum TriggerDef {
         /// Simple interval string (e.g. "1h", "30m"). Mutually exclusive with `cron`.
         #[serde(default)]
         interval: Option<String>,
+        /// Local calendar recurrence. Mutually exclusive with cron and interval.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        calendar: Option<CalendarSchedule>,
     },
     /// Fires when HTTP POST arrives at `/hooks/{id}`.
     Webhook,
@@ -97,6 +141,13 @@ pub enum ActionDef {
         /// Optional channel UUID override. Must be a valid UUID string.
         #[serde(default)]
         channel: Option<String>,
+    },
+    /// Deliver a scheduled instruction to one Agent in the workflow channel.
+    PromptAgent {
+        /// Target Agent public key (64-character hex).
+        agent: String,
+        /// Instruction sent to the Agent (supports template variables).
+        prompt: String,
     },
     /// Send a direct message to a user.
     SendDm {
@@ -175,6 +226,20 @@ impl WorkflowDef {
             ));
         }
 
+        if let Some(event_id) = self
+            .source
+            .as_ref()
+            .and_then(|source| source.event_id.as_deref())
+        {
+            let valid_event_id =
+                event_id.len() == 64 && event_id.chars().all(|c| c.is_ascii_hexdigit());
+            if !valid_event_id {
+                return Err(WorkflowError::InvalidDefinition(
+                    "source.event_id must be a 64-character hex event id".into(),
+                ));
+            }
+        }
+
         // Validate step IDs are safe for use in evalexpr variable names.
         // Step IDs become variable names like `steps_{id}_output_{field}`,
         // so they must only contain alphanumeric chars and underscores.
@@ -203,19 +268,42 @@ impl WorkflowDef {
                     step.id
                 )));
             }
+
+            if let ActionDef::PromptAgent { agent, prompt } = &step.action {
+                let valid_pubkey =
+                    agent.len() == 64 && agent.chars().all(|c| c.is_ascii_hexdigit());
+                if !valid_pubkey {
+                    return Err(WorkflowError::InvalidDefinition(
+                        "prompt_agent requires a 64-character hex agent pubkey".into(),
+                    ));
+                }
+                if prompt.trim().is_empty() {
+                    return Err(WorkflowError::InvalidDefinition(
+                        "prompt_agent prompt must not be empty".into(),
+                    ));
+                }
+            }
         }
 
-        if let TriggerDef::Schedule { cron, interval } = &self.trigger {
-            if cron.is_none() && interval.is_none() {
+        if let TriggerDef::Schedule {
+            cron,
+            interval,
+            calendar,
+        } = &self.trigger
+        {
+            if usize::from(cron.is_some())
+                + usize::from(interval.is_some())
+                + usize::from(calendar.is_some())
+                != 1
+            {
                 return Err(WorkflowError::InvalidDefinition(
-                    "schedule trigger requires either 'cron' or 'interval'".into(),
+                    "schedule trigger requires exactly one of 'cron', 'interval', or 'calendar'"
+                        .into(),
                 ));
             }
 
-            if cron.is_some() && interval.is_some() {
-                return Err(WorkflowError::InvalidDefinition(
-                    "schedule trigger cannot specify both 'cron' and 'interval'; use one or the other".into(),
-                ));
+            if let Some(calendar) = calendar {
+                calendar.validate()?;
             }
 
             if let Some(expr) = cron {
@@ -320,6 +408,80 @@ mod tests {
             }
             other => panic!("unexpected trigger: {other:?}"),
         }
+    }
+
+    #[test]
+    fn calendar_schedule_round_trip_and_mutual_exclusion() {
+        let yaml = "name: Local daily\ntrigger:\n  on: schedule\n  calendar:\n    frequency: daily\n    every: 2\n    time: '09:00'\n    timezone: Asia/Shanghai\n    start_date: '2026-10-12'\nsteps:\n  - id: notify\n    action: send_message\n    text: Report\n";
+        let (def, json) = parse_yaml(yaml).expect("calendar parses");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("canonical JSON parses");
+        assert_eq!(value["trigger"]["calendar"]["every"], 2);
+        let restored: WorkflowDef = serde_json::from_str(&json).expect("calendar deserializes");
+        assert!(restored.validate().is_ok());
+        let mut mixed = def;
+        if let TriggerDef::Schedule { interval, .. } = &mut mixed.trigger {
+            *interval = Some("1h".into());
+        }
+        assert!(mixed.validate().is_err());
+    }
+
+    #[test]
+    fn parse_scheduled_agent_task_with_source_round_trips() {
+        let agent = "ab".repeat(32);
+        let source_event = "cd".repeat(32);
+        let yaml = format!(
+            "name: Daily status\nsource:\n  kind: channel_user\n  event_id: {source_event}\ntrigger:\n  on: schedule\n  interval: 1h\nsteps:\n  - id: prompt_agent\n    action: prompt_agent\n    agent: {agent}\n    prompt: Summarize current progress in this channel\n"
+        );
+
+        let (def, json) = parse_yaml(&yaml).expect("scheduled Agent task should parse");
+        assert_eq!(
+            def.source,
+            Some(WorkflowSource {
+                kind: WorkflowSourceKind::ChannelUser,
+                event_id: Some(source_event.clone()),
+            })
+        );
+        assert!(matches!(
+            &def.steps[0].action,
+            ActionDef::PromptAgent { agent: parsed, prompt }
+                if parsed == &agent && prompt == "Summarize current progress in this channel"
+        ));
+
+        let reparsed: WorkflowDef = serde_json::from_str(&json).expect("json round-trip");
+        assert_eq!(reparsed.source, def.source);
+    }
+
+    #[test]
+    fn validate_rejects_prompt_agent_with_invalid_pubkey() {
+        let yaml = "name: Bad Agent\ntrigger:\n  on: schedule\n  interval: 1h\nsteps:\n  - id: prompt_agent\n    action: prompt_agent\n    agent: not-a-pubkey\n    prompt: Do the work\n";
+        let err = parse_yaml(yaml).expect_err("invalid Agent pubkey must be rejected");
+        assert!(
+            err.to_string().contains("64-character hex agent pubkey"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_prompt_agent_with_empty_prompt() {
+        let agent = "ab".repeat(32);
+        let yaml = format!(
+            "name: Empty Prompt\ntrigger:\n  on: schedule\n  interval: 1h\nsteps:\n  - id: prompt_agent\n    action: prompt_agent\n    agent: {agent}\n    prompt: '   '\n"
+        );
+        let err = parse_yaml(&yaml).expect_err("empty Agent prompt must be rejected");
+        assert!(
+            err.to_string().contains("prompt must not be empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_invalid_source_event_id() {
+        let yaml = "name: Bad Source\nsource:\n  kind: channel_user\n  event_id: not-an-event\ntrigger:\n  on: schedule\n  interval: 1h\nsteps:\n  - id: wait\n    action: delay\n    duration: 1m\n";
+        let err = parse_yaml(yaml).expect_err("invalid source event id must be rejected");
+        assert!(
+            err.to_string().contains("source.event_id"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -512,7 +674,7 @@ mod tests {
         let yaml = "name: Interval Schedule\ntrigger:\n  on: schedule\n  interval: 30m\nsteps:\n  - id: s1\n    action: send_message\n    text: tick\n";
         let (def, _) = parse_yaml(yaml).expect("parse failed");
         match &def.trigger {
-            TriggerDef::Schedule { cron, interval } => {
+            TriggerDef::Schedule { cron, interval, .. } => {
                 assert!(cron.is_none());
                 assert_eq!(interval.as_deref(), Some("30m"));
             }

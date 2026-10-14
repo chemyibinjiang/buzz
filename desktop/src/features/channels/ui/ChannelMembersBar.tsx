@@ -1,4 +1,4 @@
-import { EllipsisVertical, Settings2, Users } from "lucide-react";
+import { Clock3, EllipsisVertical, Settings2, Users } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -23,6 +23,7 @@ import { useUsersBatchQuery } from "@/features/profile/hooks";
 import type { Channel } from "@/shared/api/types";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
+import { ScheduledAgentTaskDialog } from "@/features/workflows/ui/ScheduledAgentTaskDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import {
   DropdownMenu,
@@ -53,6 +54,7 @@ export function ChannelMembersBar({
 }: ChannelMembersBarProps) {
   const [uncontrolledAddBotOpen, setUncontrolledAddBotOpen] =
     React.useState(false);
+  const [scheduledTaskOpen, setScheduledTaskOpen] = React.useState(false);
   const isAddBotOpen = isAddBotOpenProp ?? uncontrolledAddBotOpen;
   const setIsAddBotOpen = React.useCallback(
     (open: boolean) => {
@@ -140,6 +142,7 @@ export function ChannelMembersBar({
 
     previousChannelIdRef.current = channel.id;
     setIsAddBotOpen(false);
+    setScheduledTaskOpen(false);
   }, [channel.id, setIsAddBotOpen]);
 
   const dialogErrorMessage =
@@ -206,6 +209,10 @@ export function ChannelMembersBar({
             </span>
           </DropdownMenuItem>
           {huddleIndicator}
+          <DropdownMenuItem onSelect={() => setScheduledTaskOpen(true)}>
+            <Clock3 />
+            <span>Schedule Agent task</span>
+          </DropdownMenuItem>
           <DropdownMenuItem
             data-testid="channel-management-trigger"
             onSelect={onManageChannel}
@@ -237,6 +244,22 @@ export function ChannelMembersBar({
         </Tooltip>
 
         {huddleIndicator}
+
+        <Tooltip disableHoverableContent>
+          <TooltipTrigger asChild>
+            <Button
+              aria-label="Schedule Agent task"
+              data-testid="schedule-agent-task-trigger"
+              onClick={() => setScheduledTaskOpen(true)}
+              size="icon"
+              type="button"
+              variant="outline"
+            >
+              <Clock3 />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Schedule Agent task</TooltipContent>
+        </Tooltip>
 
         <Tooltip disableHoverableContent>
           <TooltipTrigger asChild>
@@ -273,6 +296,11 @@ export function ChannelMembersBar({
         providers={providers}
         providersErrorMessage={dialogErrorMessage}
         providersLoading={providersQuery.isLoading}
+      />
+      <ScheduledAgentTaskDialog
+        channel={channel}
+        onOpenChange={setScheduledTaskOpen}
+        open={scheduledTaskOpen}
       />
     </React.Fragment>
   );

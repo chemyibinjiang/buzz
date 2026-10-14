@@ -10,6 +10,15 @@ import { WorkflowCard } from "@/features/workflows/ui/WorkflowCard";
 import { WorkflowDeleteDialog } from "@/features/workflows/ui/WorkflowDeleteDialog";
 import { WorkflowDetailPanel } from "@/features/workflows/ui/WorkflowDetailPanel";
 import { WorkflowDialog } from "@/features/workflows/ui/WorkflowDialog";
+import {
+  getPromptAgentPubkey,
+  isScheduledAgentTask,
+} from "@/features/workflows/ui/workflowDefinition";
+import {
+  useManagedAgentsQuery,
+  useRelayAgentsQuery,
+} from "@/features/agents/hooks";
+import { useUsersBatchQuery } from "@/features/profile/hooks";
 import type { Channel, Workflow } from "@/shared/api/types";
 import {
   deleteWorkflow,
@@ -108,6 +117,25 @@ export function WorkflowsView({
   });
 
   const allWorkflows = allWorkflowsQuery.data ?? [];
+  const ownerPubkeys = React.useMemo(
+    () => [
+      ...new Set(allWorkflows.map(({ workflow }) => workflow.ownerPubkey)),
+    ],
+    [allWorkflows],
+  );
+  const creatorsQuery = useUsersBatchQuery(ownerPubkeys);
+  const managedAgentsQuery = useManagedAgentsQuery();
+  const relayAgentsQuery = useRelayAgentsQuery();
+  const agentNames = React.useMemo(() => {
+    const names = new Map<string, string>();
+    for (const agent of relayAgentsQuery.data ?? []) {
+      if (!agent.deleted) names.set(agent.pubkey.toLowerCase(), agent.name);
+    }
+    for (const agent of managedAgentsQuery.data ?? []) {
+      names.set(agent.pubkey.toLowerCase(), agent.name);
+    }
+    return names;
+  }, [managedAgentsQuery.data, relayAgentsQuery.data]);
 
   const triggerMutation = useMutation({
     mutationFn: (workflowId: string) => triggerWorkflow(workflowId),
@@ -179,7 +207,9 @@ export function WorkflowsView({
       >
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold">Workflows</h2>
+            <h2 className="text-lg font-semibold">
+              Workflows & scheduled tasks
+            </h2>
             <Button
               aria-label="Refresh workflows"
               disabled={allWorkflowsQuery.isFetching}
@@ -229,6 +259,11 @@ export function WorkflowsView({
             {allWorkflows.map(({ workflow, channelName }) => (
               <WorkflowCard
                 channelName={channelName}
+                creatorName={
+                  creatorsQuery.data?.profiles[
+                    workflow.ownerPubkey.toLowerCase()
+                  ]?.displayName ?? undefined
+                }
                 isActive={selectedWorkflowId === workflow.id}
                 key={workflow.id}
                 onDelete={handleDelete}
@@ -236,6 +271,15 @@ export function WorkflowsView({
                 onEdit={handleEdit}
                 onSelect={onSelectWorkflow}
                 onTrigger={handleTrigger}
+                targetAgentName={
+                  isScheduledAgentTask(workflow.definition)
+                    ? agentNames.get(
+                        getPromptAgentPubkey(
+                          workflow.definition,
+                        )?.toLowerCase() ?? "",
+                      )
+                    : undefined
+                }
                 workflow={workflow}
               />
             ))}

@@ -502,6 +502,14 @@ pub const KIND_STREAM_MESSAGE_SCHEDULED: u32 = 40006;
 pub const KIND_STREAM_REMINDER: u32 = 40007;
 /// A diff/patch message showing file changes (unified diff format).
 pub const KIND_STREAM_MESSAGE_DIFF: u32 = 40008;
+/// Relay-signed instruction emitted when a scheduled workflow prompts an Agent.
+///
+/// The event is channel-scoped and carries the target Agent in a `p` tag plus
+/// the human/Agent that created the schedule in a `created_by` tag. Clients
+/// cannot submit this kind directly; the workflow scheduler is the sole
+/// producer. This lets Agent runtimes apply their ordinary instruction-access
+/// policy to the creator while still trusting the schedule delivery envelope.
+pub const KIND_SCHEDULED_AGENT_PROMPT: u32 = 40009;
 /// Canvas (shared document) for a channel.
 pub const KIND_CANVAS: u32 = 40100;
 /// System message for channel state changes (join, leave, rename, etc.).
@@ -719,6 +727,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_STREAM_MESSAGE_SCHEDULED,
     KIND_STREAM_REMINDER,
     KIND_STREAM_MESSAGE_DIFF,
+    KIND_SCHEDULED_AGENT_PROMPT,
     KIND_CANVAS,
     KIND_SYSTEM_MESSAGE,
     KIND_CHANNEL_SUMMARY,
@@ -848,6 +857,7 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
             | KIND_DM_VISIBILITY
             | KIND_THREAD_SUMMARY
             | KIND_WINDOW_BOUNDS
+            | KIND_SCHEDULED_AGENT_PROMPT
     )
 }
 
@@ -1093,5 +1103,11 @@ mod tests {
         // from its own delegated readers.
         assert!(!is_shared_gated_kind(KIND_TEAM));
         assert!(!is_shared_gated_kind(KIND_MANAGED_AGENT));
+    }
+
+    #[test]
+    fn scheduled_agent_prompts_are_relay_only() {
+        assert!(is_relay_only_kind(KIND_SCHEDULED_AGENT_PROMPT));
+        assert!(ALL_KINDS.contains(&KIND_SCHEDULED_AGENT_PROMPT));
     }
 }

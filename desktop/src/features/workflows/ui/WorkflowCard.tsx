@@ -20,12 +20,16 @@ import {
 import {
   getWorkflowDescription,
   getWorkflowDisplayStatus,
+  getWorkflowSourceKind,
   getWorkflowTriggerSummary,
+  isScheduledAgentTask,
 } from "./workflowDefinition";
 
 type WorkflowCardProps = {
   workflow: Workflow;
   channelName?: string;
+  creatorName?: string;
+  targetAgentName?: string;
   isActive?: boolean;
   onSelect: (workflowId: string) => void;
   onTrigger: (workflowId: string) => void;
@@ -50,6 +54,8 @@ function StatusBadge({ status }: { status: Workflow["status"] }) {
 export function WorkflowCard({
   workflow,
   channelName,
+  creatorName,
+  targetAgentName,
   isActive = false,
   onSelect,
   onTrigger,
@@ -60,6 +66,8 @@ export function WorkflowCard({
   const displayStatus = getWorkflowDisplayStatus(workflow);
   const description = getWorkflowDescription(workflow.definition);
   const triggerSummary = getWorkflowTriggerSummary(workflow.definition);
+  const sourceKind = getWorkflowSourceKind(workflow.definition);
+  const scheduledAgentTask = isScheduledAgentTask(workflow.definition);
 
   return (
     <div
@@ -83,10 +91,14 @@ export function WorkflowCard({
             <span className="truncate text-sm font-medium">
               {workflow.name}
             </span>
+            {scheduledAgentTask ? (
+              <Badge variant="info">Agent task</Badge>
+            ) : null}
             <StatusBadge status={displayStatus} />
           </div>
           <div className="mt-1.5 flex items-center gap-3 pl-6 text-2xs text-muted-foreground">
             {channelName ? <span>{channelName}</span> : null}
+            {targetAgentName ? <span>Agent: {targetAgentName}</span> : null}
             {triggerSummary ? <span>{triggerSummary}</span> : null}
             <span className="flex items-center gap-1">
               <Clock className="h-4 w-4" />
@@ -96,6 +108,12 @@ export function WorkflowCard({
           {description ? (
             <p className="mt-2 pl-6 text-xs text-muted-foreground">
               {description}
+            </p>
+          ) : null}
+          {scheduledAgentTask ? (
+            <p className="mt-1 pl-6 text-2xs text-muted-foreground">
+              Created by {creatorName ?? `${workflow.ownerPubkey.slice(0, 8)}…`}{" "}
+              · Source: {sourceKind.replace(/_/g, " ")}
             </p>
           ) : null}
         </div>

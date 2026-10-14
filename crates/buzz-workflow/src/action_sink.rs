@@ -7,6 +7,29 @@ use std::future::Future;
 use std::pin::Pin;
 
 use buzz_core::tenant::CommunityId;
+use uuid::Uuid;
+
+/// Fully attributed scheduled Agent instruction passed to the relay sink.
+pub struct ScheduledAgentPrompt<'a> {
+    /// Community that owns the workflow and destination channel.
+    pub community_id: CommunityId,
+    /// Destination channel UUID.
+    pub channel_id: &'a str,
+    /// Target Agent public key.
+    pub agent_pubkey: &'a str,
+    /// Principal that created the task and whose access policy applies.
+    pub creator_pubkey: &'a str,
+    /// Stable workflow/task identifier.
+    pub workflow_id: Uuid,
+    /// Human-readable task name.
+    pub workflow_name: &'a str,
+    /// Creation surface such as `channel_user` or `agent_self`.
+    pub source_kind: &'a str,
+    /// Optional event that requested task creation.
+    pub source_event_id: Option<&'a str>,
+    /// Instruction delivered to the Agent.
+    pub prompt: &'a str,
+}
 
 /// Errors from action sink operations.
 #[derive(Debug, thiserror::Error)]
@@ -65,5 +88,11 @@ pub trait ActionSink: Send + Sync {
         channel_id: &str,
         text: &str,
         author_pubkey: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
+
+    /// Publish a relay-signed, channel-scoped instruction to one Agent.
+    fn prompt_agent(
+        &self,
+        prompt: ScheduledAgentPrompt<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>>;
 }

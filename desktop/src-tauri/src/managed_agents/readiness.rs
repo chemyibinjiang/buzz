@@ -43,7 +43,7 @@ use std::collections::BTreeMap;
 
 use crate::managed_agents::{
     agent_env::baked_build_env,
-    config_bridge::read_goose_file_config,
+    config_bridge::{read_codex_requires_openai_auth, read_goose_file_config},
     discovery::{known_acp_runtime, KnownAcpRuntime},
     env_vars::merged_user_env,
     global_config::GlobalAgentConfig,
@@ -440,8 +440,21 @@ fn collect_missing_requirements(
             "complete Claude Code authentication by running the Claude CLI",
             rt,
         ),
-        "codex" => cli_login::requirements(&["codex", "login", "status"], "run `codex login`", rt),
+        "codex" => codex_requirements(rt, read_codex_requires_openai_auth()),
         _ => vec![],
+    }
+}
+
+fn codex_requirements(
+    runtime: &KnownAcpRuntime,
+    requires_openai_auth: Option<bool>,
+) -> Vec<Requirement> {
+    let probe_args = &["codex", "login", "status"];
+    let setup_copy = "run `codex login`";
+    if requires_openai_auth == Some(false) {
+        cli_login::availability_requirements(probe_args, setup_copy, runtime)
+    } else {
+        cli_login::requirements(probe_args, setup_copy, runtime)
     }
 }
 
@@ -1013,6 +1026,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn codex_custom_provider_without_openai_auth_skips_login_probe() {
+        let executable = present_binary_str();
+        let runtime = make_cli_runtime(static_commands(vec![executable]), Some(executable));
+        let requirements = codex_requirements(&runtime, Some(false));
+        assert!(
+            requirements.is_empty(),
+            "an installed Codex runtime using a custom provider must not require codex login: {requirements:?}"
+        );
+    }
+
+    #[test]
+    fn codex_custom_provider_still_requires_installed_runtime() {
+        let runtime = make_cli_runtime(
+            &["__buzz_nonexistent_adapter_custom_provider__"],
+            Some("__buzz_nonexistent_codex_custom_provider__"),
+        );
+        let requirements = codex_requirements(&runtime, Some(false));
+        assert!(
+            !requirements.is_empty(),
+            "skipping OpenAI auth must not skip CLI and adapter availability checks"
+        );
     }
 
     // ── cli_login_requirements: resolve_command integration ─────────────

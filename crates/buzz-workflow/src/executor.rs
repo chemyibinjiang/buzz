@@ -407,6 +407,10 @@ pub fn resolve_step_templates(
             text: t(text)?,
             channel: t_opt(channel)?,
         }),
+        PromptAgent { agent, prompt } => Ok(PromptAgent {
+            agent: t(agent)?,
+            prompt: t(prompt)?,
+        }),
         SendDm { to, text } => Ok(SendDm {
             to: t(to)?,
             text: t(text)?,
@@ -592,6 +596,72 @@ pub async fn dispatch_action(
 
                     Ok(StepResult::Completed(serde_json::json!({
                         "sent": true,
+                        "event_id": event_id,
+                    })))
+                }
+
+                PromptAgent { agent, prompt } => {
+                    let wf_run = engine
+                        .db
+                        .get_workflow_run(community_id, run_id)
+                        .await
+                        .map_err(|e| {
+                            WorkflowError::WebhookError(format!(
+                                "PromptAgent: failed to load workflow run {run_id}: {e}"
+                            ))
+                        })?;
+                    let workflow = engine
+                        .db
+                        .get_workflow(community_id, wf_run.workflow_id)
+                        .await
+                        .map_err(|e| {
+                            WorkflowError::WebhookError(format!(
+                                "PromptAgent: failed to load workflow {}: {e}",
+                                wf_run.workflow_id
+                            ))
+                        })?;
+                    let channel_id = workflow.channel_id.ok_or_else(|| {
+                        WorkflowError::InvalidDefinition(
+                            "PromptAgent requires a channel-scoped workflow".into(),
+                        )
+                    })?;
+                    let def: crate::schema::WorkflowDef =
+                        serde_json::from_value(workflow.definition.clone()).map_err(|e| {
+                            WorkflowError::InvalidDefinition(format!(
+                                "PromptAgent workflow definition is invalid: {e}"
+                            ))
+                        })?;
+                    let source_kind = def
+                        .source
+                        .as_ref()
+                        .map(|source| source.kind.as_str())
+                        .unwrap_or("workflow");
+                    let source_event_id = def
+                        .source
+                        .as_ref()
+                        .and_then(|source| source.event_id.as_deref());
+                    let creator_pubkey = hex::encode(&workflow.owner_pubkey);
+                    let channel_id = channel_id.to_string();
+
+                    let event_id = engine
+                        .action_sink()?
+                        .prompt_agent(crate::action_sink::ScheduledAgentPrompt {
+                            community_id,
+                            channel_id: &channel_id,
+                            agent_pubkey: agent,
+                            creator_pubkey: &creator_pubkey,
+                            workflow_id: workflow.id,
+                            workflow_name: &workflow.name,
+                            source_kind,
+                            source_event_id,
+                            prompt,
+                        })
+                        .await
+                        .map_err(WorkflowError::from)?;
+
+                    Ok(StepResult::Completed(serde_json::json!({
+                        "prompted": true,
+                        "agent": agent,
                         "event_id": event_id,
                     })))
                 }

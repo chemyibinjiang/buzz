@@ -8,9 +8,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
-use buzz_core::kind::KIND_STREAM_MESSAGE;
+use buzz_core::kind::{KIND_SCHEDULED_AGENT_PROMPT, KIND_STREAM_MESSAGE};
 use buzz_core::tenant::CommunityId;
-use buzz_workflow::action_sink::{ActionSink, ActionSinkError};
+use buzz_workflow::action_sink::{ActionSink, ActionSinkError, ScheduledAgentPrompt};
 use chrono::Utc;
 use nostr::{EventBuilder, Kind, Tag};
 use tracing::info;
@@ -146,6 +146,50 @@ fn resolve_mention_pubkeys(text: &str, members: &[(String, String)]) -> Vec<Stri
         }
     }
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_scheduled_agent_prompt_event(
+    relay_keys: &nostr::Keys,
+    channel_uuid: Uuid,
+    agent_hex: &str,
+    creator_hex: &str,
+    workflow_id: Uuid,
+    workflow_name: &str,
+    source_kind: &str,
+    source_event_id: Option<&str>,
+    instruction: &str,
+) -> Result<nostr::Event, ActionSinkError> {
+    let channel_id = channel_uuid.to_string();
+    let workflow_id = workflow_id.to_string();
+    let mut tags = vec![
+        Tag::parse(["p", agent_hex])
+            .map_err(|e| ActionSinkError::EventBuild(format!("p tag: {e}")))?,
+        Tag::parse(["h", &channel_id])
+            .map_err(|e| ActionSinkError::EventBuild(format!("h tag: {e}")))?,
+        Tag::parse(["created_by", creator_hex])
+            .map_err(|e| ActionSinkError::EventBuild(format!("created_by tag: {e}")))?,
+        Tag::parse(["workflow", &workflow_id])
+            .map_err(|e| ActionSinkError::EventBuild(format!("workflow tag: {e}")))?,
+        Tag::parse(["buzz:workflow", "true"])
+            .map_err(|e| ActionSinkError::EventBuild(format!("workflow marker tag: {e}")))?,
+        Tag::parse(["source", source_kind])
+            .map_err(|e| ActionSinkError::EventBuild(format!("source tag: {e}")))?,
+    ];
+    if let Some(source_event_id) = source_event_id {
+        tags.push(
+            Tag::parse(["source_event", source_event_id])
+                .map_err(|e| ActionSinkError::EventBuild(format!("source_event tag: {e}")))?,
+        );
+    }
+
+    let content = format!(
+        "[Scheduled Task]\nTask: {workflow_name}\nTask ID: {workflow_id}\nCreated by: {creator_hex}\nSource: {source_kind}\nChannel: {channel_uuid}\n\nInstruction:\n{instruction}"
+    );
+    EventBuilder::new(Kind::from(KIND_SCHEDULED_AGENT_PROMPT as u16), &content)
+        .tags(tags)
+        .sign_with_keys(relay_keys)
+        .map_err(|e| ActionSinkError::EventBuild(format!("signing: {e}")))
 }
 
 /// Relay-side action sink — executes workflow side-effects directly.
@@ -362,6 +406,150 @@ impl ActionSink for RelayActionSink {
             Ok(event_id_hex)
         })
     }
+
+    fn prompt_agent(
+        &self,
+        prompt: ScheduledAgentPrompt<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>> {
+        let channel_id = prompt.channel_id.to_owned();
+        let agent_pubkey = prompt.agent_pubkey.to_owned();
+        let creator_pubkey = prompt.creator_pubkey.to_owned();
+        let workflow_id = prompt.workflow_id;
+        let workflow_name = prompt.workflow_name.to_owned();
+        let source_kind = prompt.source_kind.to_owned();
+        let source_event_id = prompt.source_event_id.map(str::to_owned);
+        let instruction = prompt.prompt.to_owned();
+        let community_id = prompt.community_id;
+
+        Box::pin(async move {
+            let state = self
+                .state
+                .upgrade()
+                .ok_or_else(|| ActionSinkError::Database("relay is shutting down".into()))?;
+            let host = state
+                .db
+                .lookup_community_host(community_id)
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?
+                .ok_or_else(|| {
+                    ActionSinkError::Database(format!(
+                        "workflow run community {community_id} is not mapped to a host"
+                    ))
+                })?;
+            let tenant = buzz_core::tenant::TenantContext::resolved(community_id, host);
+
+            if instruction.trim().is_empty() {
+                return Err(ActionSinkError::EmptyContent);
+            }
+
+            let channel_uuid = Uuid::parse_str(&channel_id)
+                .map_err(|e| ActionSinkError::InvalidInput(format!("invalid UUID: {e}")))?;
+            let channel_id = channel_uuid.to_string();
+            let channel = state
+                .db
+                .get_channel(tenant.community(), channel_uuid)
+                .await
+                .map_err(|e| match &e {
+                    buzz_db::DbError::ChannelNotFound(_) | buzz_db::DbError::NotFound(_) => {
+                        ActionSinkError::ChannelNotFound(channel_id.clone())
+                    }
+                    _ => ActionSinkError::Database(e.to_string()),
+                })?;
+            if channel.archived_at.is_some() {
+                return Err(ActionSinkError::ChannelArchived(channel_id));
+            }
+
+            let agent = nostr::PublicKey::from_hex(&agent_pubkey)
+                .map_err(|e| ActionSinkError::InvalidInput(format!("invalid Agent pubkey: {e}")))?;
+            let creator = nostr::PublicKey::from_hex(&creator_pubkey).map_err(|e| {
+                ActionSinkError::InvalidInput(format!("invalid creator pubkey: {e}"))
+            })?;
+            let agent_hex = agent.to_hex();
+            let creator_hex = creator.to_hex();
+            let target_is_member = state
+                .is_member_cached(tenant.community(), channel_uuid, &agent.to_bytes())
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+            if !target_is_member {
+                return Err(ActionSinkError::InvalidInput(
+                    "scheduled Agent is no longer a member of the workflow channel".into(),
+                ));
+            }
+            let is_registered_agent = state
+                .db
+                .get_agent_channel_policy(tenant.community(), &agent.to_bytes())
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?
+                .is_some_and(|(_, owner)| owner.is_some());
+            if !is_registered_agent {
+                return Err(ActionSinkError::InvalidInput(
+                    "scheduled target is not a registered Agent".into(),
+                ));
+            }
+
+            let event = build_scheduled_agent_prompt_event(
+                &state.relay_keypair,
+                channel_uuid,
+                &agent_hex,
+                &creator_hex,
+                workflow_id,
+                &workflow_name,
+                &source_kind,
+                source_event_id.as_deref(),
+                &instruction,
+            )?;
+
+            let event_id_hex = event.id.to_hex();
+            let event_id_bytes = event.id.as_bytes().to_vec();
+            let event_created_at =
+                chrono::DateTime::from_timestamp(event.created_at.as_secs() as i64, 0)
+                    .unwrap_or_else(Utc::now);
+            let thread_meta = Some(buzz_db::event::ThreadMetadataParams {
+                event_id: &event_id_bytes,
+                event_created_at,
+                channel_id: channel_uuid,
+                parent_event_id: None,
+                parent_event_created_at: None,
+                root_event_id: None,
+                root_event_created_at: None,
+                depth: 0,
+                broadcast: false,
+            });
+            let (stored_event, was_inserted) = state
+                .db
+                .insert_event_with_thread_metadata(
+                    tenant.community(),
+                    &event,
+                    Some(channel_uuid),
+                    thread_meta,
+                )
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+
+            if was_inserted {
+                let _ = dispatch_persistent_event(
+                    &tenant,
+                    &state,
+                    &stored_event,
+                    KIND_SCHEDULED_AGENT_PROMPT,
+                    &creator_hex,
+                    None,
+                )
+                .await;
+            }
+
+            info!(
+                event_id = %event_id_hex,
+                channel_id = %channel_uuid,
+                agent = %agent_hex,
+                creator = %creator_hex,
+                workflow_id = %workflow_id,
+                source = %source_kind,
+                "Scheduled Agent prompt published"
+            );
+            Ok(event_id_hex)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -555,6 +743,53 @@ mod tests {
             resolve_mention_pubkeys("@Max then @Robby then @Max again", &members),
             vec![pk('b'), pk('a')]
         );
+    }
+
+    #[test]
+    fn scheduled_agent_event_carries_target_and_provenance() {
+        let relay_keys = nostr::Keys::generate();
+        let agent = nostr::Keys::generate().public_key().to_hex();
+        let creator = nostr::Keys::generate().public_key().to_hex();
+        let channel = Uuid::new_v4();
+        let workflow = Uuid::new_v4();
+        let source_event = "cd".repeat(32);
+
+        let event = build_scheduled_agent_prompt_event(
+            &relay_keys,
+            channel,
+            &agent,
+            &creator,
+            workflow,
+            "Daily status",
+            "channel_user",
+            Some(&source_event),
+            "Summarize progress",
+        )
+        .expect("event should build");
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_SCHEDULED_AGENT_PROMPT);
+        assert_eq!(event.pubkey, relay_keys.public_key());
+        let channel = channel.to_string();
+        let workflow = workflow.to_string();
+        for expected in [
+            vec!["p".to_string(), agent.clone()],
+            vec!["h".to_string(), channel],
+            vec!["created_by".to_string(), creator],
+            vec!["workflow".to_string(), workflow],
+            vec!["buzz:workflow".to_string(), "true".to_string()],
+            vec!["source".to_string(), "channel_user".to_string()],
+            vec!["source_event".to_string(), source_event],
+        ] {
+            assert!(
+                event
+                    .tags
+                    .iter()
+                    .any(|tag| tag.as_slice() == expected.as_slice()),
+                "missing tag {expected:?}"
+            );
+        }
+        assert!(event.content.contains("Task: Daily status"));
+        assert!(event.content.contains("Instruction:\nSummarize progress"));
     }
 }
 

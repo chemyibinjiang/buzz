@@ -23,8 +23,8 @@ use std::time::Duration;
 use acp::{AcpClient, EnvVar, McpServer};
 use anyhow::Result;
 use buzz_core::kind::{
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_STREAM_MESSAGE,
-    KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SCHEDULED_AGENT_PROMPT,
+    KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::observer::{
     decrypt_observer_payload, encrypt_observer_payload, OBSERVER_FRAME_TELEMETRY,
@@ -281,6 +281,32 @@ async fn author_allowed(
         rest_client,
     )
     .await
+}
+
+/// Return the principal whose instruction policy applies to an inbound event.
+///
+/// Scheduled Agent prompts are relay-signed so they can fire while the creator
+/// is offline. Their authenticated creator is carried in the relay-only
+/// `created_by` tag; ordinary events continue to use the event signer.
+fn instruction_author(event: &nostr::Event, kind: u32) -> Option<String> {
+    if kind != KIND_SCHEDULED_AGENT_PROMPT {
+        return Some(event.pubkey.to_hex());
+    }
+
+    let mut creators = event.tags.iter().filter_map(|tag| {
+        let parts = tag.as_slice();
+        (parts.first().map(String::as_str) == Some("created_by"))
+            .then(|| parts.get(1).cloned())
+            .flatten()
+    });
+    let creator = creators.next()?;
+    if creators.next().is_some()
+        || creator.len() != 64
+        || !creator.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(creator.to_ascii_lowercase())
 }
 
 /// Resolve whether `channel_id` is a DM, for the inbound author gate.
@@ -1213,13 +1239,8 @@ async fn handle_relay_observer_control_event(
         }
         Some("generate_handoff") => {
             let sender = event.pubkey.to_hex();
-            if !observer_control_author_allowed(
-                "generate_handoff",
-                &sender,
-                true,
-                authorization,
-            )
-            .await
+            if !observer_control_author_allowed("generate_handoff", &sender, true, authorization)
+                .await
             {
                 tracing::warn!(
                     sender = %event.pubkey,
@@ -2137,6 +2158,7 @@ async fn tokio_main() -> Result<()> {
                         KIND_STREAM_MESSAGE,
                         KIND_WORKFLOW_APPROVAL_REQUESTED,
                         KIND_STREAM_REMINDER,
+                        KIND_SCHEDULED_AGENT_PROMPT,
                     ]
                 }),
                 require_mention: !config.no_mention_filter,
@@ -2942,7 +2964,15 @@ async fn tokio_main() -> Result<()> {
                             // explicit pubkey list on top, for external people;
                             // it never revokes same-owner team bots.
                             {
-                                let author = buzz_event.event.pubkey.to_hex();
+                                let Some(author) = instruction_author(&buzz_event.event, kind_u32)
+                                else {
+                                    tracing::warn!(
+                                        channel_id = %buzz_event.channel_id,
+                                        kind = kind_u32,
+                                        "scheduled Agent prompt has invalid creator attribution — dropping"
+                                    );
+                                    continue;
+                                };
                                 // DM hardening: resolve channel type (fail-closed
                                 // to DM) so allowlist/anyone modes cannot be
                                 // exercised by non-owner authors inside DMs.
@@ -2970,14 +3000,27 @@ async fn tokio_main() -> Result<()> {
                                 }
                             }
 
-                            let matched = filter::match_event_with_display_name(
-                                &buzz_event.event,
-                                buzz_event.channel_id,
-                                &rules,
-                                &pubkey_hex,
-                                config.session_title.as_deref(),
-                            )
-                            .await;
+                            let matched = if kind_u32 == KIND_SCHEDULED_AGENT_PROMPT
+                                && filter::event_mentions_agent(
+                                    &buzz_event.event,
+                                    &pubkey_hex,
+                                    config.session_title.as_deref(),
+                                )
+                            {
+                                Some(filter::MatchedRule {
+                                    rule_index: usize::MAX,
+                                    prompt_tag: "scheduled_task".into(),
+                                })
+                            } else {
+                                filter::match_event_with_display_name(
+                                    &buzz_event.event,
+                                    buzz_event.channel_id,
+                                    &rules,
+                                    &pubkey_hex,
+                                    config.session_title.as_deref(),
+                                )
+                                .await
+                            };
                             let prompt_tag = match matched {
                                 Some(m) => m.prompt_tag,
                                 None => {
@@ -2987,7 +3030,10 @@ async fn tokio_main() -> Result<()> {
                             };
                             // Capture author pubkey before queue.push() moves
                             // buzz_event.event (needed for mode gate below).
-                            let author_hex = buzz_event.event.pubkey.to_hex();
+                            let Some(author_hex) = instruction_author(&buzz_event.event, kind_u32)
+                            else {
+                                continue;
+                            };
                             let event_id_hex = buzz_event.event.id.to_hex();
                             // Clone for the non-cancelling steer fork, which
                             // needs the event to render the steer body. The
@@ -3926,6 +3972,35 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
     message.contains("Re-authenticate") || message.contains("API Error: 401")
 }
 
+/// Return an HTTP status when an agent reports a transient upstream service
+/// failure that is safe to retry after refreshing the ACP subprocess.
+///
+/// Codex and other ACP adapters normally perform their own short retry loop
+/// before returning these errors. Buzz therefore allows one additional outer
+/// retry, rather than applying the general ten-attempt queue budget and
+/// multiplying both retry ladders into hours of silent waiting.
+fn transient_upstream_status(error: &acp::AcpError) -> Option<u16> {
+    let acp::AcpError::AgentError { message, .. } = error else {
+        return None;
+    };
+    let normalized = message.to_ascii_lowercase();
+    [502_u16, 503, 504].into_iter().find(|status| {
+        let status = status.to_string();
+        normalized.contains(&format!("api error: {status}"))
+            || normalized.contains(&format!("http {status}"))
+            || normalized.contains(&format!("status {status}"))
+            || normalized.contains(&format!("status code {status}"))
+            || normalized.contains(&format!("{status} bad gateway"))
+            || normalized.contains(&format!("{status} service unavailable"))
+            || normalized.contains(&format!("{status} gateway timeout"))
+    })
+}
+
+/// The ACP adapter/provider has already retried internally. One fresh-process
+/// retry gives recovered services a chance without leaving a message in a
+/// nested retry loop for hours.
+const MAX_TRANSIENT_UPSTREAM_RETRIES: u32 = 1;
+
 /// Spawn a task that posts a user-visible failure notice to the relay.
 ///
 /// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
@@ -3998,6 +4073,10 @@ fn handle_prompt_result(
     // branch below records what actually happened; only the hard-timeout
     // match arm in the death_message construction reads it.
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
+    let transient_upstream = match &result.outcome {
+        PromptOutcome::Error(error) => transient_upstream_status(error),
+        _ => None,
+    };
 
     // Requeue BEFORE mark_complete: requeue() sets retry_after with a future
     // deadline, and mark_complete() checks for it to decide whether to preserve
@@ -4082,6 +4161,20 @@ fn handle_prompt_result(
                     and then re-send."
                     .to_string();
                 spawn_failure_notice(rest_client, &batch, content);
+            } else if let Some(status) = transient_upstream {
+                let retry_notice_batch = batch.clone();
+                if let Some(dead) = queue.requeue_with_limit(batch, MAX_TRANSIENT_UPSTREAM_RETRIES)
+                {
+                    let content = format!(
+                        "⚠️ I received the request, but the model service remained unavailable after an automatic retry (HTTP {status}). The request was not completed. Please check the model provider, then re-send."
+                    );
+                    spawn_failure_notice(rest_client, &dead, content);
+                } else {
+                    let content = format!(
+                        "⚠️ I received the request, but the model service is temporarily unavailable (HTTP {status}). I’m refreshing the Agent connection and will retry automatically once; you do not need to re-send yet."
+                    );
+                    spawn_failure_notice(rest_client, &retry_notice_batch, content);
+                }
             } else if let Some(dead) = queue.requeue(batch) {
                 let reason = match &result.outcome {
                     PromptOutcome::Timeout(TimeoutKind::Idle) => "the turn timed out".to_string(),
@@ -4291,18 +4384,20 @@ fn handle_prompt_result(
                     | acp::AcpError::Timeout(_)
                     | acp::AcpError::Protocol(_)
             );
+            let refresh_after_upstream_failure = transient_upstream.is_some();
             let error_code = match &e {
                 acp::AcpError::AgentError { code, .. } => Some(*code),
                 _ => None,
             };
-            if is_transport_error {
+            if is_transport_error || refresh_after_upstream_failure {
                 tracing::warn!(
                     agent = agent_index,
                     outcome = outcome_label,
                     configured_model = %harness_configured_model,
                     pid = harness_pid,
                     error = %e,
-                    "transport/protocol error — respawning agent"
+                    refresh_after_upstream_failure,
+                    "transport/protocol or transient upstream error — respawning agent"
                 );
                 emit_turn_error(&e.to_string(), error_code);
 
@@ -5234,6 +5329,74 @@ mod heartbeat_base_prompt_tests {
         let prompt = "[System: Heartbeat]\nrun feed get";
         let composed = pool::prepend_standing_for_legacy(2, &heartbeat_standing(), prompt);
         assert_eq!(composed, prompt);
+    }
+}
+
+#[cfg(test)]
+mod scheduled_instruction_author_tests {
+    use super::*;
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+
+    fn scheduled_event(created_by_tags: &[&str]) -> nostr::Event {
+        let relay_keys = Keys::generate();
+        let tags = created_by_tags
+            .iter()
+            .map(|creator| Tag::parse(["created_by", *creator]).expect("created_by tag"))
+            .collect::<Vec<_>>();
+        EventBuilder::new(
+            Kind::Custom(KIND_SCHEDULED_AGENT_PROMPT as u16),
+            "scheduled instruction",
+        )
+        .tags(tags)
+        .sign_with_keys(&relay_keys)
+        .expect("signed event")
+    }
+
+    #[test]
+    fn ordinary_event_uses_signer_as_instruction_author() {
+        let keys = Keys::generate();
+        let event = EventBuilder::new(Kind::Custom(KIND_STREAM_MESSAGE as u16), "hello")
+            .sign_with_keys(&keys)
+            .expect("signed event");
+
+        assert_eq!(
+            instruction_author(&event, KIND_STREAM_MESSAGE),
+            Some(keys.public_key().to_hex())
+        );
+    }
+
+    #[test]
+    fn scheduled_event_uses_unique_valid_creator() {
+        let creator = "AB".repeat(32);
+        let event = scheduled_event(&[&creator]);
+
+        assert_eq!(
+            instruction_author(&event, KIND_SCHEDULED_AGENT_PROMPT),
+            Some(creator.to_ascii_lowercase())
+        );
+    }
+
+    #[test]
+    fn scheduled_event_rejects_missing_duplicate_or_invalid_creator() {
+        let valid = "ab".repeat(32);
+        assert_eq!(
+            instruction_author(&scheduled_event(&[]), KIND_SCHEDULED_AGENT_PROMPT),
+            None
+        );
+        assert_eq!(
+            instruction_author(
+                &scheduled_event(&[&valid, &valid]),
+                KIND_SCHEDULED_AGENT_PROMPT
+            ),
+            None
+        );
+        assert_eq!(
+            instruction_author(
+                &scheduled_event(&["not-a-pubkey"]),
+                KIND_SCHEDULED_AGENT_PROMPT
+            ),
+            None
+        );
     }
 }
 
@@ -8461,6 +8624,43 @@ mod error_outcome_emission_tests {
         assert!(
             !is_auth_error(&timeout),
             "WriteTimeout must not be classified as auth error"
+        );
+    }
+
+    #[test]
+    fn transient_upstream_status_recognizes_provider_gateway_failures() {
+        for (message, expected) in [
+            (
+                "unexpected status 503 Service Unavailable from /v1/responses",
+                503,
+            ),
+            ("API Error: 502 Bad Gateway", 502),
+            ("request failed with HTTP 504 Gateway Timeout", 504),
+        ] {
+            let error = acp::AcpError::AgentError {
+                code: -32000,
+                message: message.to_string(),
+            };
+            assert_eq!(transient_upstream_status(&error), Some(expected));
+        }
+    }
+
+    #[test]
+    fn transient_upstream_status_rejects_auth_usage_and_transport_errors() {
+        for message in [
+            "API Error: 401 Unauthorized",
+            "API Error: 429 Too Many Requests",
+            "Usage credits required",
+        ] {
+            let error = acp::AcpError::AgentError {
+                code: -32000,
+                message: message.to_string(),
+            };
+            assert_eq!(transient_upstream_status(&error), None);
+        }
+        assert_eq!(
+            transient_upstream_status(&acp::AcpError::Protocol("HTTP 503".into())),
+            None
         );
     }
 

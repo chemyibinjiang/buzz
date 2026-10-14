@@ -589,8 +589,8 @@ pub struct Config {
     /// Per-persona env vars to inject at agent spawn time (e.g., GOOSE_PROVIDER, GOOSE_MODEL, BUZZ_AGENT_MODEL).
     /// Populated from persona pack resolution. Empty when no pack is configured.
     pub persona_env_vars: Vec<(String, String)>,
-    /// Whether `codex_network_env()` successfully injected a `CODEX_CONFIG` entry into
-    /// `persona_env_vars`.  When true, `AcpClient::spawn` merges all `CODEX_CONFIG` entries
+    /// Whether Buzz injected one or more generated `CODEX_CONFIG` entries into
+    /// `persona_env_vars`. When true, `AcpClient::spawn` merges all `CODEX_CONFIG` entries
     /// and forces `sandbox_workspace_write.network_access = true` via `build_codex_config_env`.
     /// When false (non-Codex agents or rejected relay URL), the helper returns None and
     /// any persona-supplied `CODEX_CONFIG` is handled with ordinary operator-wins semantics.
@@ -822,6 +822,64 @@ pub fn codex_network_env(agent_command: &str, relay_url: &str) -> Option<(String
         "CODEX_CONFIG".into(),
         "{\"sandbox_workspace_write\":{\"network_access\":true}}".into(),
     ))
+}
+
+/// Build a session-scoped Codex provider override that keeps retries owned by
+/// the Buzz queue rather than nesting Codex's provider retries inside Buzz's
+/// own retry loop.
+///
+/// The selected custom provider's endpoint, auth, and model settings continue
+/// to come from the user's `~/.codex/config.toml`; this overlay changes only
+/// retry/idle policy for the Codex process spawned by Buzz. Built-in OpenAI
+/// and remote task runtimes are left untouched.
+fn codex_provider_resilience_env(
+    agent_command: &str,
+    remote_task: bool,
+) -> Option<(String, String)> {
+    if remote_task
+        || !matches!(
+            normalize_agent_command_identity(agent_command).as_str(),
+            "codex" | "codex-acp"
+        )
+    {
+        return None;
+    }
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?;
+    let content = std::fs::read_to_string(codex_home.join("config.toml")).ok()?;
+    codex_provider_resilience_overlay(&content).map(|json| ("CODEX_CONFIG".into(), json))
+}
+
+fn codex_provider_resilience_overlay(content: &str) -> Option<String> {
+    let config = toml::from_str::<toml::Value>(content).ok()?;
+    let provider = config
+        .get("model_provider")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())?;
+    if provider.eq_ignore_ascii_case("openai") {
+        return None;
+    }
+    config.get("model_providers")?.get(provider)?.as_table()?;
+
+    serde_json::to_string(&serde_json::json!({
+        // Explicitly select the provider from the user's current config even
+        // when resuming a task whose historical metadata names an older one.
+        "model_provider": provider,
+        "model_providers": {
+            (provider): {
+                // Codex's default is four HTTP retries plus five stream
+                // retries. Buzz performs one fresh-process retry itself, so
+                // nesting both policies makes one outage look like a hung
+                // Agent for many minutes.
+                "request_max_retries": 0,
+                "stream_max_retries": 0,
+                "stream_idle_timeout_ms": 60_000,
+            }
+        }
+    }))
+    .ok()
 }
 
 pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<String> {
@@ -1143,13 +1201,20 @@ impl Config {
         // Inject CODEX_CONFIG so the @agentclientprotocol/codex-acp adapter (1.x)
         // opens the Seatbelt network sandbox for buzz-cli (an MCP subprocess). No-op
         // for non-Codex agents or unparseable relay URLs.
-        let has_generated_codex_config =
-            if let Some(network_env) = codex_network_env(&agent_command, &args.relay_url) {
-                persona_env_vars.push(network_env);
-                true
-            } else {
-                false
-            };
+        let mut has_generated_codex_config = false;
+        if let Some(network_env) = codex_network_env(&agent_command, &args.relay_url) {
+            persona_env_vars.push(network_env);
+            has_generated_codex_config = true;
+        }
+        if let Some(retry_env) = codex_provider_resilience_env(
+            &agent_command,
+            codex_task_binding
+                .as_ref()
+                .is_some_and(|binding| binding.remote),
+        ) {
+            persona_env_vars.push(retry_env);
+            has_generated_codex_config = true;
+        }
 
         validate_multiple_event_handling(args.multiple_event_handling, args.dedup)?;
 
@@ -1340,7 +1405,8 @@ pub fn resolve_channel_filters(
     rules: &[SubscriptionRule],
 ) -> HashMap<Uuid, ChannelFilter> {
     use buzz_core::kind::{
-        KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
+        KIND_SCHEDULED_AGENT_PROMPT, KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER,
+        KIND_WORKFLOW_APPROVAL_REQUESTED,
     };
 
     let target_channels: Vec<Uuid> = if let Some(ref overrides) = config.channels_override {
@@ -1357,13 +1423,17 @@ pub fn resolve_channel_filters(
 
     match config.subscribe_mode {
         SubscribeMode::Mentions => {
-            let kinds = config.kinds_override.clone().unwrap_or_else(|| {
+            let mut kinds = config.kinds_override.clone().unwrap_or_else(|| {
                 vec![
                     KIND_STREAM_MESSAGE,
                     KIND_WORKFLOW_APPROVAL_REQUESTED,
                     KIND_STREAM_REMINDER,
+                    KIND_SCHEDULED_AGENT_PROMPT,
                 ]
             });
+            if !kinds.contains(&KIND_SCHEDULED_AGENT_PROMPT) {
+                kinds.push(KIND_SCHEDULED_AGENT_PROMPT);
+            }
             // Managed Desktop agents carry their visible name in
             // `session_title`. Subscribe to the channel stream for those
             // agents so older clients whose visible `@Name` mention omitted
@@ -1381,11 +1451,17 @@ pub fn resolve_channel_filters(
             }
         }
         SubscribeMode::All => {
+            let kinds = config.kinds_override.clone().map(|mut kinds| {
+                if !kinds.contains(&KIND_SCHEDULED_AGENT_PROMPT) {
+                    kinds.push(KIND_SCHEDULED_AGENT_PROMPT);
+                }
+                kinds
+            });
             for ch in &target_channels {
                 result.insert(
                     *ch,
                     ChannelFilter {
-                        kinds: config.kinds_override.clone(),
+                        kinds: kinds.clone(),
                         require_mention: false,
                     },
                 );
@@ -1417,6 +1493,11 @@ pub fn resolve_channel_filters(
                 }
 
                 if has_rule {
+                    if let Some(kinds) = &mut merged_kinds {
+                        if !kinds.contains(&KIND_SCHEDULED_AGENT_PROMPT) {
+                            kinds.push(KIND_SCHEDULED_AGENT_PROMPT);
+                        }
+                    }
                     result.insert(
                         *ch,
                         ChannelFilter {
@@ -1447,7 +1528,8 @@ pub fn resolve_dynamic_channel_filter(
     rules: &[crate::filter::SubscriptionRule],
 ) -> Option<ChannelFilter> {
     use buzz_core::kind::{
-        KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
+        KIND_SCHEDULED_AGENT_PROMPT, KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER,
+        KIND_WORKFLOW_APPROVAL_REQUESTED,
     };
 
     // In Mentions/All mode, if the operator explicitly constrained channels
@@ -1466,18 +1548,30 @@ pub fn resolve_dynamic_channel_filter(
     }
 
     match config.subscribe_mode {
-        SubscribeMode::Mentions => Some(ChannelFilter {
-            kinds: Some(config.kinds_override.clone().unwrap_or_else(|| {
+        SubscribeMode::Mentions => {
+            let mut kinds = config.kinds_override.clone().unwrap_or_else(|| {
                 vec![
                     KIND_STREAM_MESSAGE,
                     KIND_WORKFLOW_APPROVAL_REQUESTED,
                     KIND_STREAM_REMINDER,
+                    KIND_SCHEDULED_AGENT_PROMPT,
                 ]
-            })),
-            require_mention: !config.no_mention_filter && config.session_title.is_none(),
-        }),
+            });
+            if !kinds.contains(&KIND_SCHEDULED_AGENT_PROMPT) {
+                kinds.push(KIND_SCHEDULED_AGENT_PROMPT);
+            }
+            Some(ChannelFilter {
+                kinds: Some(kinds),
+                require_mention: !config.no_mention_filter && config.session_title.is_none(),
+            })
+        }
         SubscribeMode::All => Some(ChannelFilter {
-            kinds: config.kinds_override.clone(),
+            kinds: config.kinds_override.clone().map(|mut kinds| {
+                if !kinds.contains(&KIND_SCHEDULED_AGENT_PROMPT) {
+                    kinds.push(KIND_SCHEDULED_AGENT_PROMPT);
+                }
+                kinds
+            }),
             require_mention: false,
         }),
         SubscribeMode::Config => {
@@ -1511,6 +1605,12 @@ pub fn resolve_dynamic_channel_filter(
                 // No rules match — don't subscribe. Consistent with
                 // resolve_channel_filters() which omits unmatched channels.
                 return None;
+            }
+
+            if let Some(kinds) = &mut merged_kinds {
+                if !kinds.contains(&KIND_SCHEDULED_AGENT_PROMPT) {
+                    kinds.push(KIND_SCHEDULED_AGENT_PROMPT);
+                }
             }
 
             Some(ChannelFilter {
@@ -1622,6 +1722,7 @@ mod tests {
             assert!(kinds.contains(&buzz_core::kind::KIND_STREAM_MESSAGE));
             assert!(kinds.contains(&buzz_core::kind::KIND_WORKFLOW_APPROVAL_REQUESTED));
             assert!(kinds.contains(&buzz_core::kind::KIND_STREAM_REMINDER));
+            assert!(kinds.contains(&buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT));
         }
     }
 
@@ -1649,7 +1750,10 @@ mod tests {
         let result = resolve_channel_filters(&config, &channels, &[]);
 
         let f = result.get(&channels[0]).unwrap();
-        assert_eq!(f.kinds.as_ref().unwrap(), &[1, 7]);
+        assert_eq!(
+            f.kinds.as_ref().unwrap(),
+            &[1, 7, buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT]
+        );
     }
 
     #[test]
@@ -1888,6 +1992,71 @@ mod tests {
         assert!(codex_network_env("codex-acp", "not-a-url").is_none());
     }
 
+    // --- codex_provider_resilience_overlay tests ---
+
+    #[test]
+    fn codex_provider_resilience_overlay_uses_selected_custom_provider() {
+        let overlay = codex_provider_resilience_overlay(
+            r#"
+model_provider = "new-gateway"
+
+[model_providers.new-gateway]
+name = "Current provider"
+base_url = "http://59.77.33.211:8371/v1"
+requires_openai_auth = false
+"#,
+        )
+        .expect("custom provider should receive a resilience overlay");
+        let value: serde_json::Value =
+            serde_json::from_str(&overlay).expect("overlay should be valid JSON");
+
+        assert_eq!(
+            value["model_providers"]["new-gateway"]["request_max_retries"],
+            0
+        );
+        assert_eq!(
+            value["model_providers"]["new-gateway"]["stream_max_retries"],
+            0
+        );
+        assert_eq!(
+            value["model_providers"]["new-gateway"]["stream_idle_timeout_ms"],
+            60_000
+        );
+        assert_eq!(value["model_provider"], "new-gateway");
+        assert!(
+            value["model_providers"].get("provider").is_none(),
+            "the dynamic provider id must not be serialized as the literal key `provider`"
+        );
+    }
+
+    #[test]
+    fn codex_provider_resilience_overlay_skips_builtin_openai() {
+        assert!(codex_provider_resilience_overlay(
+            r#"
+model_provider = "openai"
+
+[model_providers.openai]
+name = "OpenAI"
+"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn codex_provider_resilience_overlay_rejects_missing_or_unknown_provider() {
+        assert!(codex_provider_resilience_overlay("").is_none());
+        assert!(codex_provider_resilience_overlay(
+            r#"
+model_provider = "current"
+
+[model_providers.other]
+name = "Other"
+"#
+        )
+        .is_none());
+        assert!(codex_provider_resilience_overlay("not = valid = toml").is_none());
+    }
+
     #[test]
     fn test_all_mode_wildcard() {
         let config = test_config(SubscribeMode::All);
@@ -1913,7 +2082,10 @@ mod tests {
         let result = resolve_channel_filters(&config, &channels, &[]);
 
         let f = result.get(&channels[0]).unwrap();
-        assert_eq!(f.kinds.as_ref().unwrap(), &[9, 7]);
+        assert_eq!(
+            f.kinds.as_ref().unwrap(),
+            &[9, 7, buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT]
+        );
     }
 
     #[test]
@@ -1949,7 +2121,10 @@ mod tests {
         let result = resolve_channel_filters(&config, &[ch], &rules);
         assert_eq!(result.len(), 1);
         let f = result.get(&ch).unwrap();
-        assert_eq!(f.kinds.as_ref().unwrap(), &[9]);
+        assert_eq!(
+            f.kinds.as_ref().unwrap(),
+            &[9, buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT]
+        );
         assert!(!f.require_mention);
     }
 
@@ -1987,6 +2162,7 @@ mod tests {
         let kinds = f.kinds.as_ref().expect("should have merged kinds");
         assert!(kinds.contains(&9));
         assert!(kinds.contains(&7));
+        assert!(kinds.contains(&buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT));
         // require_mention should be false (most permissive wins).
         assert!(!f.require_mention);
     }

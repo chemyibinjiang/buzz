@@ -308,3 +308,52 @@
 - 处理：将 `51919` 保留为首选端口，并在版本化配置中持久化实际 URL。健康的已配置 runtime 会直接复用；首选端口被无关进程占用时，仅在 loopback 上顺延探测 `51920..51950`，绝不终止占用者。成功启动后原子保存地址；状态面板、Desktop 启动/接管和每次本地 Agent spawn 均读取该地址，旧 task binding 自动刷新。SSH 和显式远程 URL 不参与本地端口改写。
 - 验证：Tauri 编译通过；Codex Desktop 聚焦测试 16/16、shared-runtime 默认解析测试 1/1、runtime panel 测试 2/2 通过，Desktop TypeScript typecheck 与 Biome 检查通过。新增用例覆盖旧配置兼容、候选端口范围、远程 URL 不改写和真实 loopback 端口占用；现场现有 51919 shared runtime 保持原 PID 且 readiness 为 HTTP 200。
 - 版本/提交：分支 `codex/remove-orphaned-task-agent`，待提交。
+
+## 2026-10-10：频道内为 Agent 设置定时任务 / Heartbeat
+
+- 现象/需求：用户希望直接在群聊频道中选择 Agent、设置周期与指令，让 Agent 到期后自动工作；任务列表和执行事件必须能区分是谁、从哪个频道、通过哪种入口创建的任务。
+- 诊断：ACP 原有 heartbeat 是进程级自唤醒参数，无法按频道、按 Agent 由群聊用户配置，也没有可供其他成员审计的创建来源。现有 `buzz-workflow` 已具备频道持久化、cron/interval、暂停删除、运行历史和跨 Relay 重启去重，适合作为调度底座。
+- 处理：新增 `prompt_agent` workflow action 和 relay-only `kind:40009` 定时指令事件；事件记录目标 Agent、创建者、workflow ID、来源类型、来源频道和可选来源事件。Relay 到期时确认目标仍在频道并签名发布，ACP 使用不可伪造的 `created_by` 归因执行现有 `Who can send instructions` 权限检查。Desktop 频道栏新增定时任务入口，仅列出当前频道 Agent，并在 Workflow 管理页展示任务创建者、来源、频道和目标 Agent。
+- 验证：`buzz-workflow` 全量单元测试 159/159（另 2 项 Postgres 测试按设计 ignored）、workflow schema 54/54、ACP 配置 119/119、ACP 创建者归因 3/3、Relay 定时事件结构 1/1、`buzz-core` relay-only kind 1/1 通过；`cargo check -p buzz-workflow -p buzz-acp -p buzz-relay`、Desktop TypeScript、10 个相关文件的 Biome 和前端定时任务测试 3/3 通过。Desktop 全量测试中的失败集中在既有 thread reply/visibility-gated hook 用例，与本次 workflow/频道任务文件无交集。
+- 版本/提交：待提交。
+
+## 2026-10-10：本地 Codex ACP Agent 在频道提示需要运行 `codex login`
+
+- 现象：安装 Heartbeat 测试包后，在频道中向 `Experiment Designer` 发消息会收到“needs configuration / run `codex login`”提示；用户此前使用 Codex Desktop 时未见该提示。
+- 诊断：该身份是本地 `codex-acp` 自定义 Agent（`agent_command: codex-acp`），不是通过 51919 shared runtime 绑定的 Codex task Agent。现场 `codex login status` 返回 `Not logged in`，且用户目录不存在 `.codex/auth.json`；与此同时 Codex Desktop 通过自己的 app-server daemon 登录会话运行，因此 Desktop 可用不代表独立 Codex CLI 已登录。Agent 日志显示它自 2026-09-24 起已因同一项 readiness requirement 进入 setup-listener 模式，当时未解析到频道所以没有发布提醒；本次加入频道后才显现，并非 Heartbeat 调度代码导致。
+- 处理：本轮仅完成现场诊断，不修改鉴权语义。此类自定义 `codex-acp` Agent 需要按实际鉴权方式建立 CLI 凭据后重启 Agent：ChatGPT 账号使用 `codex login`，API 用户使用 `codex login --with-api-key`。当前频道提示只写 `run codex login`，对 API 用户不够准确；如果目标是复用 Codex Desktop 上下文，应创建 Codex task Agent 并走 shared runtime，而不是把普通 `codex-acp` Agent 的 readiness 检查绕过。
+- 验证：`codex-cli 0.162.1` 可解析；`codex login status` 退出码为 1 并输出 `Not logged in`；Agent 运行日志明确记录 `setup payload present`、`requirements=1` 以及配置提醒事件成功发布，Relay 连接正常。
+- 版本/提交：诊断基于 `0.5.19-heartbeat-test`，功能工作区待提交。
+
+## 2026-10-11：纠正 Codex ACP `codex login` 提示的根因
+
+- 现象：同一台机器改回旧安装包后，本地 `codex-acp` Agent 仍提示“needs configuration / run `codex login`”；因此该问题与 Heartbeat 测试包及 Buzz UI 中的 API Key 配置无关。
+- 诊断：现场 Codex 配置选择了自定义 `model_provider`，且该 provider 明确设置 `requires_openai_auth = false`。但 Desktop 的 `collect_missing_requirements()` 对所有 Codex runtime 都无条件执行 `codex login status`；退出码非零即产生 `CliLogin` requirement。Runtime 随后注入 `BUZZ_ACP_SETUP_PAYLOAD`，使 `buzz-acp` 在真正启动 `codex-acp`、连接自定义 provider 之前就进入 setup-listener。现有 Codex config bridge 虽读取 `model_provider`，却未把所选 provider 的 `requires_openai_auth` 暴露给 readiness，因此把“当前 provider 不需要 OpenAI 登录”错误解释成“缺少登录”。
+- 处理：Codex readiness 现在读取当前 `model_provider` 对应的 `requires_openai_auth`。只有明确为 `false` 时跳过 `codex login status`，同时仍检查 Codex CLI 与 ACP adapter 是否安装；默认 OpenAI、显式 `true`、无法解析或无法分类的配置继续使用原登录探测，不放宽安全兜底。未改用户凭据、Codex 配置或 Agent 数据。
+- 验证：Agent 历史日志显示同一 Agent 早期曾正常启动 `codex-acp`，自 2026-09-24 起稳定进入 `setup-listener`；失败日志发生在 ACP adapter 启动之前。新增 5 个 provider 认证语义测试和 2 个 readiness 回归测试；Codex config bridge 19/19、Codex readiness 3/3 通过。现场正在运行的是既有 `0.5.19` 安装，而非 Heartbeat 测试包。
+- 版本/提交：修复位于 `Lin/develop` 当前工作区，未提交；测试安装包 `0.5.19-codex-provider-auth-test` 已生成，SHA-256 为 `1db6606f4f28c639b05e5303baee95cdac88d8dc0d458c7cb7a5bb106a683826`。
+
+## 2026-10-11：Experiment Designer 无回复，Codex provider 请求返回 503
+
+- 现象：用户在 Buzz 向 `Experiment Designer` 发送消息后长时间没有回复，怀疑消息未送达；Codex UI 同时提示会话已在另一个应用打开。
+- 定位：本机 managed-agent 记录确认该 Agent 使用绑定 task `01a057fd-92ae-74f1-a520-1a7e57195c86` 和共享 app-server `ws://127.0.0.1:51919`。Buzz 进程于 21:42:17 启动，21:42:18 已连接 Relay、订阅 2 个频道并设为 online；同一 Codex task 在 21:42:23 开始处理、21:48:30 结束，task completion 的 `last_agent_message` 为空，错误为自定义 OpenAI-compatible `/v1/responses` endpoint 返回 `503 Service Unavailable`。因此消息进入绑定的 Codex task，但模型服务端没有生成回复；Codex UI 的“会话已在另一个应用打开”对应 Buzz 持有该 task writer lock，是共享 task 正在被 Buzz 使用的提示，不是 Relay 投递失败。
+- 处理：本轮仅完成只读诊断，未改用户的 Codex provider、密钥、task binding 或 Relay 配置。现有 ACP 队列对一般应用错误最多重试 10 次，退避从约 5 秒递增到 300 秒，只有最终 dead-letter 后才向频道发送失败提示；因此上游持续返回 503 时，用户可能等待很久才看到终态提示。Readiness 修复只移除了不适用于该自定义 provider 的 `codex login` 门槛，并未验证 provider 端到端可用，不能作为“回复链路已修复”的证据。
+- 验证：只读取 Buzz managed-agent 日志、task binding、进程树和本地 Codex task 的结构化状态/错误元数据；未读取或输出会话正文与密钥，未发送探测请求。现场证据时间为 2026-10-11 21:42–21:48（Asia/Shanghai）。
+- 版本/提交：运行包为 `0.5.19-codex-provider-auth-test`；诊断记录添加于当前 `Lin/develop` 工作区，未提交。上游 provider 的 503 需要检查其服务/网关状态；Buzz 的延迟失败提示属于可独立改进的用户体验问题。
+
+## 2026-10-12：模型服务 5xx 时 Agent 长时间无回复
+
+- 现象：消息已经进入绑定的 Codex task，但模型服务返回 HTTP 503 后，频道只持续显示 Agent 工作状态，用户无法判断消息是否收到，也无法在合理时间内得到成功回复或明确终态。
+- 诊断：消息投递和 Codex task binding 正常；当前选中的新 provider 是 `custom`，请求地址为 `http://59.77.33.211:8371/v1`，且 `requires_openai_auth = false`。现场对 `/models` 与 `/responses` 的鉴权请求均约 11 秒后返回 HTTP 503，无代理直连 8371 端口则连接失败。旧 `packycode` provider 已停用，不能作为恢复或回退目标。ACP adapter 自身默认还会执行 4 次 HTTP retry、5 次 stream retry，Buzz 又把 502/503/504 当作普通应用错误，套用最多 10 次、最长 300 秒一级的外层退避；两层重试相乘，会让同一条消息长时间静默等待。
+- 处理：不保存、不恢复、也不回退旧 provider；Buzz 每次启动 Codex ACP 时读取当前 `model_provider`，并在 session-scoped `CODEX_CONFIG` 中显式选择它，因此恢复历史 task 时也会从旧 provider 切换到当前 provider。对当前非 OpenAI provider 同时把 adapter 内层 request/stream retry 设为 0、stream idle 上限设为 60 秒；provider 地址、认证与模型仍完全来自用户当前配置。本机活动配置中未选中的旧 `packycode` provider 定义也已移除，历史 session 日志只作为审计记录保留。Buzz 识别 ACP `AgentError` 中的 HTTP 502/503/504：首次失败保留原消息、立即在原频道/线程确认已收到，刷新 ACP Agent 进程后自动再尝试一次；第二次仍失败则发布明确终态并停止重试。其他应用错误继续使用原有通用重试策略，认证错误仍立即终止。
+- 验证：临时 Codex CLI 探测确认 retry 配置可将同一 503 从约 6 分钟压缩到约 13 秒；`cargo check -p buzz-acp` 及新增的 provider overlay、overlay 深度合并、502/503/504 分类、单次外层重试边界测试通过。Windows PowerShell 下全量库测试 765/834 通过，其余 69 项因测试夹具依赖 Unix `cat/sh` 而失败；改用 Git Bash 后 798/834 通过，剩余 36 项仍是同一批 ACP shell 脚本夹具在当前 Windows 执行环境提前退出，和本次分类/队列逻辑无关。新 provider 当前仍持续返回 503；Buzz 可以快速识别、保留并重试消息，但实际生成答案仍需该 provider 恢复可用。
+- 版本/提交：当前 `Lin/develop` 工作区，待提交。
+
+## 2026-10-12：定时任务 / Heartbeat 界面及本地时区重复规则
+
+- 现象/需求：用户确认连接恢复后，要求频道 Agent 定时任务具备截图中的大指令输入框、每日重复、北京时间、折叠高级选项，以及每 N 周、星期多选、开始时间等自定义设置，并保留任务来源。
+- 诊断：原有任务入口主要暴露 cron/interval，cron 按 UTC 执行，不能直接表示截图中的本地时间和以开始日期为基准的每 N 天/周规则；仅修改界面或把日期规则转换成普通 cron 会导致执行时间或周期错误。
+- 处理：重做 Schedule a task 弹窗，支持 Daily、Weekdays、Weekly、Custom 和 Heartbeat；默认本地时区 09:00，名称可从指令首行生成，高级设置提供时区、开始日期及来源说明。Workflow 编辑和列表保留并显示 calendar 规则及来源。Relay 增加 IANA 时区日历调度，按开始日期计算每 N 天/周，沿用确定性 UTC 执行锚点与数据库去重，并处理夏令时缺失/重复时间。使用与部署说明见 `docs/scheduled-agent-tasks.md`。
+- 验证：`buzz-workflow` 165 项单元测试通过（2 项 Postgres 测试 ignored），覆盖北京时间、跨月每两天、每两周、夏令时和序列化互斥；workflow Clippy no-deps、Rust fmt、Relay/ACP cargo check、Desktop typecheck、25 个相关文件 Biome 与文本字号检查通过。前端 8 项测试、新增 3 项 Playwright 弹窗测试及现有 9 项 Workflow 测试通过；截图核对每日和自定义星期界面。界面测试使用 mock Relay，尚未验证真实 Relay 到期后 Agent 回复。
+- 检查限制：当前 Windows Hermit bootstrap 失败且无可用 `just`、Postgres/Redis 工具，未完成 `just ci` / `just test`。包含依赖的 Clippy 被既有 `buzz-core/src/agent_handoff.rs` 警告阻断，全仓 Desktop 文件长度门禁也被其他已有超限文件阻断，本次新日历/弹窗文件未超限。实际定时执行需同步升级 Relay。
+- 版本/提交：`0.5.19`，`Lin/develop` 当前工作区，未提交；本轮未生成安装包。

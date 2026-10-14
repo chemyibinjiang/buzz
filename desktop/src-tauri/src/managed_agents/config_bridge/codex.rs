@@ -7,6 +7,42 @@ pub(super) fn read_config_file() -> Option<RuntimeFileConfig> {
     parse_codex_config(&raw)
 }
 
+/// Read the authentication requirement for the currently selected provider.
+/// Missing config means Codex's built-in OpenAI provider.
+pub(super) fn read_requires_openai_auth() -> Option<bool> {
+    let Some(path) = codex_config_path() else {
+        return Some(true);
+    };
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(true),
+        Err(_) => return None,
+    };
+    parse_requires_openai_auth(&raw)
+}
+
+fn parse_requires_openai_auth(toml_str: &str) -> Option<bool> {
+    let table: toml::Table = toml_str.parse().ok()?;
+    let provider = toml_string(&table, "model_provider").unwrap_or_else(|| "openai".to_string());
+
+    if let Some(provider_config) = table
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+        .and_then(|providers| providers.get(&provider))
+        .and_then(toml::Value::as_table)
+    {
+        return provider_config
+            .get("requires_openai_auth")
+            .and_then(toml::Value::as_bool);
+    }
+
+    if provider.eq_ignore_ascii_case("openai") {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 fn parse_codex_config(toml_str: &str) -> Option<RuntimeFileConfig> {
     let table: toml::Table = toml_str.parse().ok()?;
 
@@ -178,6 +214,52 @@ base_url = "http://localhost:8080"
         let cfg = parse_codex_config(toml).unwrap();
         assert_eq!(cfg.provider.as_deref(), Some("custom-provider"));
         assert!(cfg.extra.contains_key("model_providers.custom-provider"));
+    }
+
+    #[test]
+    fn custom_provider_can_skip_openai_login() {
+        let toml = r#"
+model_provider = "custom-provider"
+
+[model_providers.custom-provider]
+requires_openai_auth = false
+"#;
+        assert_eq!(parse_requires_openai_auth(toml), Some(false));
+    }
+
+    #[test]
+    fn custom_provider_can_require_openai_login() {
+        let toml = r#"
+model_provider = "custom-provider"
+
+[model_providers.custom-provider]
+requires_openai_auth = true
+"#;
+        assert_eq!(parse_requires_openai_auth(toml), Some(true));
+    }
+
+    #[test]
+    fn custom_provider_without_explicit_auth_requirement_is_unknown() {
+        let toml = r#"
+model_provider = "custom-provider"
+
+[model_providers.custom-provider]
+base_url = "http://localhost:8080/v1"
+"#;
+        assert_eq!(parse_requires_openai_auth(toml), None);
+    }
+
+    #[test]
+    fn default_openai_provider_requires_login() {
+        assert_eq!(parse_requires_openai_auth(""), Some(true));
+    }
+
+    #[test]
+    fn missing_selected_provider_is_unknown() {
+        assert_eq!(
+            parse_requires_openai_auth(r#"model_provider = "missing""#),
+            None
+        );
     }
 
     #[test]

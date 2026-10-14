@@ -15,7 +15,10 @@ import { Skeleton } from "@/shared/ui/skeleton";
 import {
   getWorkflowDescription,
   getWorkflowDisplayStatus,
+  getPromptAgentPubkey,
+  getWorkflowSourceKind,
   getWorkflowTriggerSummary,
+  isScheduledAgentTask,
 } from "./workflowDefinition";
 
 type WorkflowDetailPanelProps = {
@@ -44,6 +47,9 @@ export function WorkflowDetailPanel({
     ? getWorkflowTriggerSummary(workflow.definition)
     : null;
   const workflowStatus = workflow ? getWorkflowDisplayStatus(workflow) : null;
+  const scheduledAgentTask = workflow
+    ? isScheduledAgentTask(workflow.definition)
+    : false;
   const triggerError = errorMessage(
     triggerMutation.error,
     "The relay did not create a workflow run.",
@@ -145,6 +151,36 @@ export function WorkflowDetailPanel({
       >
         {workflow ? (
           <div className="space-y-4 p-4">
+            {scheduledAgentTask ? (
+              <div>
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Task source
+                </h4>
+                <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-xs">
+                  <p>
+                    Created by:{" "}
+                    <span className="font-mono">{workflow.ownerPubkey}</span>
+                  </p>
+                  <p>
+                    Source:{" "}
+                    {getWorkflowSourceKind(workflow.definition).replace(
+                      /_/g,
+                      " ",
+                    )}
+                  </p>
+                  <p>
+                    Target Agent:{" "}
+                    <span className="font-mono">
+                      {getPromptAgentPubkey(workflow.definition)}
+                    </span>
+                  </p>
+                  <p>
+                    Channel:{" "}
+                    <span className="font-mono">{workflow.channelId}</span>
+                  </p>
+                </div>
+              </div>
+            ) : null}
             <div>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Definition

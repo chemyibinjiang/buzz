@@ -38,6 +38,7 @@ function getInitialYaml(
   const def = { ...workflow.definition };
   if (mode === "duplicate") {
     def.name = `${def.name ?? workflow.name} (copy)`;
+    def.source = { kind: "channel_user" };
   }
   return yamlStringify(def);
 }

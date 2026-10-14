@@ -114,6 +114,43 @@ function StepConfigFields({
           </div>
         </div>
       );
+    case "prompt_agent":
+      return (
+        <div className="space-y-2">
+          <div className="space-y-1.5">
+            <FieldLabel htmlFor={`${prefix}-agent`}>Agent pubkey</FieldLabel>
+            <Input
+              autoCapitalize="off"
+              autoCorrect="off"
+              disabled={disabled}
+              id={`${prefix}-agent`}
+              onChange={(event) =>
+                onUpdate({ ...step, agent: event.target.value })
+              }
+              placeholder="64-character Agent public key"
+              value={step.agent ?? ""}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <FieldLabel htmlFor={`${prefix}-prompt`}>Instruction</FieldLabel>
+            <Textarea
+              autoCapitalize="off"
+              className="min-h-[96px] resize-y text-sm"
+              disabled={disabled}
+              id={`${prefix}-prompt`}
+              onChange={(event) =>
+                onUpdate({ ...step, prompt: event.target.value })
+              }
+              placeholder="What should this Agent do when the task runs?"
+              value={step.prompt ?? ""}
+            />
+            <p className="text-xs text-muted-foreground">
+              The workflow creator remains the instruction source. The Agent's
+              access policy is checked again every time the task runs.
+            </p>
+          </div>
+        </div>
+      );
     case "send_dm":
       return (
         <div className="space-y-2">

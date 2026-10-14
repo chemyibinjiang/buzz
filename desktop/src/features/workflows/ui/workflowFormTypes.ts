@@ -12,6 +12,7 @@ export type TriggerType = (typeof TRIGGER_TYPES)[number];
 export const ACTION_TYPES = [
   "delay",
   "send_message",
+  "prompt_agent",
   "send_dm",
   "call_webhook",
   "request_approval",
@@ -26,6 +27,16 @@ export type TriggerConfig = {
   emoji?: string;
   cron?: string;
   interval?: string;
+  calendar?: CalendarSchedule;
+};
+
+export type CalendarSchedule = {
+  frequency: "daily" | "weekly";
+  every: number;
+  time: string;
+  timezone: string;
+  start_date: string;
+  weekdays: number[];
 };
 
 export type HeaderFormState = {
@@ -42,6 +53,8 @@ export type StepFormState = {
   timeoutSecs?: string;
   duration?: string;
   text?: string;
+  agent?: string;
+  prompt?: string;
   channel?: string;
   to?: string;
   url?: string;
@@ -61,6 +74,10 @@ export type WorkflowFormState = {
   enabled: boolean;
   trigger: TriggerConfig;
   steps: StepFormState[];
+  source?: {
+    kind: string;
+    eventId?: string;
+  };
 };
 
 export const DEFAULT_FORM_STATE: WorkflowFormState = {
@@ -69,6 +86,7 @@ export const DEFAULT_FORM_STATE: WorkflowFormState = {
   enabled: true,
   trigger: { on: "message_posted" },
   steps: [],
+  source: { kind: "channel_user" },
 };
 
 export const TRIGGER_LABELS: Record<TriggerType, string> = {
@@ -82,6 +100,7 @@ export const TRIGGER_LABELS: Record<TriggerType, string> = {
 export const ACTION_LABELS: Record<ActionType, string> = {
   delay: "Delay",
   send_message: "Send Message",
+  prompt_agent: "Prompt Agent",
   send_dm: "Send DM",
   call_webhook: "Call Webhook",
   request_approval: "Request Approval",
@@ -142,6 +161,10 @@ function actionFieldsForStep(step: StepFormState): Record<string, unknown> {
       if (step.text) fields.text = step.text;
       if (step.channel) fields.channel = step.channel;
       break;
+    case "prompt_agent":
+      if (step.agent) fields.agent = step.agent;
+      if (step.prompt) fields.prompt = step.prompt;
+      break;
     case "send_dm":
       if (step.to) fields.to = step.to;
       if (step.text) fields.text = step.text;
@@ -185,6 +208,7 @@ export function formStateToYaml(state: WorkflowFormState): string {
   if (state.trigger.on === "schedule") {
     if (state.trigger.cron) trigger.cron = state.trigger.cron;
     if (state.trigger.interval) trigger.interval = state.trigger.interval;
+    if (state.trigger.calendar) trigger.calendar = state.trigger.calendar;
   }
 
   const steps = state.steps.map((step) => ({
@@ -204,6 +228,12 @@ export function formStateToYaml(state: WorkflowFormState): string {
   }
   if (!state.enabled) {
     workflow.enabled = false;
+  }
+  if (state.source) {
+    workflow.source = {
+      kind: state.source.kind,
+      ...(state.source.eventId ? { event_id: state.source.eventId } : {}),
+    };
   }
 
   return yamlStringify(workflow);
@@ -245,6 +275,7 @@ export function yamlToFormState(
       emoji: parsed.trigger?.emoji ?? undefined,
       cron: parsed.trigger?.cron ?? undefined,
       interval: parsed.trigger?.interval ?? undefined,
+      calendar: parsed.trigger?.calendar ?? undefined,
     };
 
     const rawSteps = parsed.steps ?? [];
@@ -273,6 +304,8 @@ export function yamlToFormState(
             : undefined,
         duration: step.duration as string | undefined,
         text: step.text as string | undefined,
+        agent: step.agent as string | undefined,
+        prompt: step.prompt as string | undefined,
         channel: step.channel as string | undefined,
         to: step.to as string | undefined,
         url: step.url as string | undefined,
@@ -298,6 +331,15 @@ export function yamlToFormState(
         enabled: parsed.enabled !== false,
         trigger,
         steps,
+        source:
+          parsed.source && typeof parsed.source === "object"
+            ? {
+                kind: String(parsed.source.kind ?? "workflow"),
+                eventId: parsed.source.event_id
+                  ? String(parsed.source.event_id)
+                  : undefined,
+              }
+            : undefined,
       },
     };
   } catch (error) {

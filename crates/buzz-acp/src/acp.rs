@@ -5184,6 +5184,7 @@ mod tests {
     }
 
     const GENERATED: &str = r#"{"sandbox_workspace_write":{"network_access":true}}"#;
+    const PROVIDER_RESILIENCE: &str = r#"{"model_provider":"new-gateway","model_providers":{"new-gateway":{"request_max_retries":0,"stream_max_retries":0,"stream_idle_timeout_ms":60000}}}"#;
 
     #[test]
     fn build_codex_config_env_returns_none_when_no_codex_config_in_extra_env() {
@@ -5274,6 +5275,31 @@ mod tests {
         assert_eq!(
             v["sandbox_workspace_write"]["network_access"], true,
             "network_access must be forced true"
+        );
+    }
+
+    #[test]
+    fn build_codex_config_env_merges_network_and_provider_resilience_overlays() {
+        let extra = env(&[
+            ("CODEX_CONFIG", GENERATED),
+            ("CODEX_CONFIG", PROVIDER_RESILIENCE),
+        ]);
+        let merged = build_codex_config_env(&extra, None, true).unwrap().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&merged).unwrap();
+
+        assert_eq!(value["sandbox_workspace_write"]["network_access"], true);
+        assert_eq!(value["model_provider"], "new-gateway");
+        assert_eq!(
+            value["model_providers"]["new-gateway"]["request_max_retries"],
+            0
+        );
+        assert_eq!(
+            value["model_providers"]["new-gateway"]["stream_max_retries"],
+            0
+        );
+        assert_eq!(
+            value["model_providers"]["new-gateway"]["stream_idle_timeout_ms"],
+            60_000
         );
     }
 

@@ -16,3 +16,10 @@ pub(crate) use types::*;
 pub(crate) fn read_goose_file_config() -> Option<RuntimeFileConfig> {
     goose::read_config_file()
 }
+
+/// Return whether the selected Codex model provider requires OpenAI auth.
+/// `None` preserves the existing CLI-probe fallback when config is invalid or
+/// the selected provider cannot be classified.
+pub(crate) fn read_codex_requires_openai_auth() -> Option<bool> {
+    codex::read_requires_openai_auth()
+}

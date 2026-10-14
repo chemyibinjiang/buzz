@@ -31,6 +31,7 @@
 //! ```
 
 pub mod action_sink;
+pub mod calendar;
 pub mod error;
 pub mod executor;
 pub mod schema;
@@ -540,8 +541,17 @@ impl WorkflowEngine {
                 // never `now`, which is per-pod and would let every pod fire.
                 let (scheduled_for, trigger_type) = match &def.trigger {
                     schema::TriggerDef::Schedule {
+                        cron: None,
+                        interval: None,
+                        calendar: Some(schedule),
+                    } => match schedule.fire_instant(now, 60) {
+                        Some(instant) => (instant, "calendar"),
+                        None => continue,
+                    },
+                    schema::TriggerDef::Schedule {
                         cron: Some(expr),
                         interval: None,
+                        calendar: None,
                     } => match cron_fire_instant(expr, now, 60, workflow.id) {
                         Some(instant) => (instant, "cron"),
                         None => continue,
@@ -549,6 +559,7 @@ impl WorkflowEngine {
                     schema::TriggerDef::Schedule {
                         cron: None,
                         interval: Some(dur),
+                        calendar: None,
                     } => {
                         // Cheap pre-filter: skip the claim attempt when the
                         // in-memory clock says we're clearly mid-interval. The
@@ -1380,6 +1391,7 @@ steps:
         let trigger = TriggerDef::Schedule {
             cron: Some("0 9 * * 1-5".to_owned()),
             interval: None,
+            calendar: None,
         };
         // Schedule triggers are fired by the cron loop, not by events.
         assert!(!trigger_matches_event(
@@ -1482,6 +1494,7 @@ steps:
         let sched_trigger = TriggerDef::Schedule {
             cron: None,
             interval: Some("1h".to_owned()),
+            calendar: None,
         };
         let webhook_trigger = TriggerDef::Webhook;
 

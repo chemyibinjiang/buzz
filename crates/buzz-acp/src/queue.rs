@@ -427,6 +427,25 @@ impl EventQueue {
     /// Note: does NOT remove from `in_flight_channels` — caller must call
     /// `mark_complete` separately.
     pub fn requeue(&mut self, batch: FlushBatch) -> Option<FlushBatch> {
+        self.requeue_with_limit(batch, MAX_RETRIES)
+    }
+
+    /// Re-queue a failed batch with a caller-specific retry limit.
+    ///
+    /// Most failures use [`MAX_RETRIES`], but failures whose upstream client
+    /// already performed its own bounded retries (for example an LLM provider
+    /// returning HTTP 503) need a smaller outer retry budget. Otherwise a
+    /// single user request can remain apparently active for hours while two
+    /// nested retry loops multiply each other's delays.
+    ///
+    /// `max_retries` is the number of times the batch may be put back on the
+    /// queue after its initial attempt. A value of `1` therefore permits one
+    /// automatic retry and dead-letters the batch if that retry also fails.
+    pub fn requeue_with_limit(
+        &mut self,
+        batch: FlushBatch,
+        max_retries: u32,
+    ) -> Option<FlushBatch> {
         let channel_id = batch.channel_id;
         let attempt = {
             let count = self.retry_counts.entry(channel_id).or_insert(0);
@@ -434,13 +453,13 @@ impl EventQueue {
             *count
         };
 
-        if attempt > MAX_RETRIES {
+        if attempt > max_retries {
             tracing::error!(
                 channel_id = %channel_id,
                 attempt,
                 events = batch.events.len(),
                 "dead-lettering batch after {} retries — discarding {} events",
-                MAX_RETRIES,
+                max_retries,
                 batch.events.len(),
             );
             self.retry_counts.remove(&channel_id);
@@ -466,7 +485,7 @@ impl EventQueue {
         tracing::warn!(
             channel_id = %channel_id,
             attempt,
-            max = MAX_RETRIES,
+            max = max_retries,
             delay_secs = delay.as_secs_f64(),
             events = batch.events.len(),
             "requeueing failed batch with backoff"
@@ -3083,6 +3102,32 @@ mod tests {
         // No retry_after — channel should be immediately flushable.
         assert!(!q.retry_after.contains_key(&ch));
         assert!(q.flush_next().is_some());
+    }
+
+    #[test]
+    fn test_requeue_with_limit_allows_one_retry_then_dead_letters() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        q.push(make_queued(ch, "msg"));
+
+        let first = q.flush_next().expect("initial batch");
+        assert!(q.requeue_with_limit(first, 1).is_none());
+        q.mark_complete(ch);
+        assert_eq!(q.queued_event_count(&ch), 1);
+
+        // Expire only the test throttle; production waits for its deadline.
+        q.retry_after
+            .insert(ch, Instant::now() - Duration::from_secs(1));
+        let retry = q.flush_next().expect("single retry batch");
+        let dead = q
+            .requeue_with_limit(retry, 1)
+            .expect("second failure must dead-letter");
+        q.mark_complete(ch);
+
+        assert_eq!(dead.events.len(), 1);
+        assert_eq!(q.queued_event_count(&ch), 0);
+        assert!(!q.retry_counts.contains_key(&ch));
+        assert!(!q.retry_after.contains_key(&ch));
     }
 
     #[test]

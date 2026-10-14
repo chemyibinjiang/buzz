@@ -6,6 +6,8 @@ import { Checkbox } from "@/shared/ui/checkbox";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { WorkflowStepCard } from "./WorkflowStepCard";
+import { WorkflowCalendarFields } from "./WorkflowCalendarFields";
+import { defaultScheduleOptions, scheduleTrigger } from "./agentTaskSchedule";
 import { FieldLabel, FormSelect } from "./workflowFormPrimitives";
 import {
   DEFAULT_FORM_STATE,
@@ -81,36 +83,63 @@ function TriggerConfigFields({
       return (
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <FieldLabel htmlFor="wf-trigger-cron">
-              Cron expression (optional)
-            </FieldLabel>
-            <Input
-              autoCapitalize="off"
-              id="wf-trigger-cron"
-              onChange={(event) =>
-                onUpdate({ ...trigger, cron: event.target.value })
-              }
-              placeholder="e.g. 0 9 * * 1-5 (weekdays at 9am UTC)"
-              value={trigger.cron ?? ""}
-            />
+            <FieldLabel htmlFor="wf-schedule-type">Schedule type</FieldLabel>
+            <FormSelect
+              id="wf-schedule-type"
+              value={trigger.calendar ? "calendar" : "legacy"}
+              onChange={(value) => {
+                const defaults = scheduleTrigger(defaultScheduleOptions());
+                onUpdate(
+                  value === "calendar" && defaults.trigger
+                    ? defaults.trigger
+                    : { on: "schedule", interval: "1h" },
+                );
+              }}
+            >
+              <option value="calendar">Local calendar time</option>
+              <option value="legacy">Interval / UTC cron</option>
+            </FormSelect>
           </div>
-          <div className="space-y-1.5">
-            <FieldLabel htmlFor="wf-trigger-interval">
-              Interval (optional)
-            </FieldLabel>
-            <Input
-              autoCapitalize="off"
-              id="wf-trigger-interval"
-              onChange={(event) =>
-                onUpdate({ ...trigger, interval: event.target.value })
-              }
-              placeholder="e.g. 1h, 30m"
-              value={trigger.interval ?? ""}
+          {trigger.calendar ? (
+            <WorkflowCalendarFields
+              value={trigger.calendar}
+              onChange={(calendar) => onUpdate({ on: "schedule", calendar })}
             />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Provide either a cron expression or a simple interval.
-          </p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="wf-trigger-cron">
+                  Cron expression (optional)
+                </FieldLabel>
+                <Input
+                  autoCapitalize="off"
+                  id="wf-trigger-cron"
+                  onChange={(event) =>
+                    onUpdate({ on: "schedule", cron: event.target.value })
+                  }
+                  placeholder="e.g. 0 9 * * 1-5 (weekdays at 9am UTC)"
+                  value={trigger.cron ?? ""}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel htmlFor="wf-trigger-interval">
+                  Interval (optional)
+                </FieldLabel>
+                <Input
+                  autoCapitalize="off"
+                  id="wf-trigger-interval"
+                  onChange={(event) =>
+                    onUpdate({ on: "schedule", interval: event.target.value })
+                  }
+                  placeholder="e.g. 1h, 30m"
+                  value={trigger.interval ?? ""}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Provide either a cron expression or a simple interval.
+              </p>
+            </>
+          )}
         </div>
       );
     default:
