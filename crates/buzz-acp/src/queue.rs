@@ -1299,6 +1299,43 @@ fn append_new_thread_reply_instruction(s: &mut String, event_id: &str) {
     ));
 }
 
+/// Keep a human-directed agent delegation out of an agent-only thread.
+///
+/// The delegating Agent identifies both the receiving Agent and the human
+/// recipient with `p` tags. The recipient Agent must deliver to the human in a
+/// normal conversation surface; replying only to the delegator satisfies the
+/// machine-to-machine exchange but leaves the person waiting in Inbox.
+fn append_human_delivery_instruction(s: &mut String) {
+    s.push_str(
+        "\nIMPORTANT: Another Agent is delegating a human-facing delivery. Send the result as a new top-level message in this channel or direct message, without `--reply-to`, and keep the human recipient explicitly @mentioned. Do not only reply to the delegating Agent or leave the delivery inside a thread. If the request explicitly asks for a private DM, open/use that DM and send the result there instead.",
+    );
+}
+
+fn profile_is_agent(pubkey: &str, profile_lookup: Option<&PromptProfileLookup>) -> bool {
+    profile_lookup
+        .and_then(|m| m.get(&normalize_lookup_key(pubkey)))
+        .map(|p| p.is_agent)
+        .unwrap_or(false)
+}
+
+/// True when an Agent-authored event explicitly tags at least one human.
+///
+/// This is different from an ordinary human-facing turn: the tagged human is
+/// the delivery recipient, while the event sender is merely the delegator.
+/// Such results belong in the channel/DM timeline, not under the delegator's
+/// thread.
+fn turn_is_agent_delegation_to_human(
+    sender_pubkey: &str,
+    thread_tags: &ThreadTags,
+    profile_lookup: Option<&PromptProfileLookup>,
+) -> bool {
+    profile_is_agent(sender_pubkey, profile_lookup)
+        && thread_tags
+            .mentioned_pubkeys
+            .iter()
+            .any(|pubkey| !profile_is_agent(pubkey, profile_lookup))
+}
+
 /// Decide whether a turn is human-facing for reply-anchor purposes.
 ///
 /// A turn is human-facing when the triggering sender is a human, OR a human
@@ -1312,18 +1349,29 @@ fn turn_is_human_facing(
     thread_tags: &ThreadTags,
     profile_lookup: Option<&PromptProfileLookup>,
 ) -> bool {
-    let is_agent = |pubkey: &str| -> bool {
-        profile_lookup
-            .and_then(|m| m.get(&normalize_lookup_key(pubkey)))
-            .map(|p| p.is_agent)
-            // Unknown identity → treat as human (fail open for visibility).
-            .unwrap_or(false)
-    };
-
-    if !is_agent(sender_pubkey) {
+    if !profile_is_agent(sender_pubkey, profile_lookup) {
         return true;
     }
-    thread_tags.mentioned_pubkeys.iter().any(|pk| !is_agent(pk))
+    thread_tags
+        .mentioned_pubkeys
+        .iter()
+        .any(|pk| !profile_is_agent(pk, profile_lookup))
+}
+
+fn scheduled_task_creator(event: &Event) -> Option<String> {
+    let creators = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let parts = tag.as_slice();
+            (parts.first().map(String::as_str) == Some("created_by"))
+                .then(|| parts.get(1))
+                .flatten()
+        })
+        .filter(|value| value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .map(|value| value.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    (creators.len() == 1).then(|| creators[0].clone())
 }
 
 /// Resolve the `--reply-to` anchor for a non-DM turn.
@@ -1677,9 +1725,19 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
             return Vec::new();
         }
     };
-    let thread_tags = parse_thread_tags(&last_event.event);
+    let parsed_thread_tags = parse_thread_tags(&last_event.event);
     let is_scheduled_agent_prompt =
         last_event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT;
+    // A scheduled prompt is a hidden relay control event, never a visible
+    // conversation root. Ignore any structural tags it carries so neither the
+    // prompt nor an Agent CLI send can anchor a reply to an event the desktop
+    // cannot show.
+    let scheduled_thread_tags = ThreadTags::default();
+    let thread_tags = if is_scheduled_agent_prompt {
+        &scheduled_thread_tags
+    } else {
+        &parsed_thread_tags
+    };
     let is_dm = args
         .channel_info
         .map(|ci| ci.channel_type == "dm")
@@ -1728,7 +1786,11 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     // Agent↔agent turns get no forced anchor — deep nesting is intentional
     // there. DMs are always 1:1 with a human, so they always anchor.
     let sender_pubkey = last_event.event.pubkey.to_hex();
-    let reply_anchor = if is_dm {
+    let agent_delegation_to_human = !is_scheduled_agent_prompt
+        && turn_is_agent_delegation_to_human(&sender_pubkey, thread_tags, args.profile_lookup);
+    let reply_anchor = if is_scheduled_agent_prompt || agent_delegation_to_human {
+        None
+    } else if is_dm {
         thread_tags
             .root_event_id
             .is_some()
@@ -1736,27 +1798,38 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     } else {
         resolve_reply_anchor(
             &sender_pubkey,
-            &thread_tags,
+            thread_tags,
             &last_event.event.id.to_hex(),
             args.profile_lookup,
         )
     };
-    sections.push(format_context_hints(
+    let mut context_hints = format_context_hints(
         batch.channel_id,
         args.channel_info,
-        &thread_tags,
+        thread_tags,
         is_dm,
         args.conversation_context.is_some(),
         args.conversation_context_had_delivered_events,
         reply_anchor.as_deref(),
-    ));
+    );
+    if agent_delegation_to_human {
+        append_human_delivery_instruction(&mut context_hints);
+    }
+    sections.push(context_hints);
     if is_scheduled_agent_prompt {
+        let creator_hint = scheduled_task_creator(&last_event.event)
+            .map(|creator| {
+                format!(
+                    " The task creator is `{creator}`. If the task asks another Agent to contact, greet, report to, or notify the creator, include `--mention {creator}` on the delegation message and explicitly tell that Agent to deliver top-level (or by DM when requested), not merely reply to you."
+                )
+            })
+            .unwrap_or_default();
         let instructions = if args.scheduled_auto_delivery {
-            "[Scheduled Task Delivery]\nReturn the result as your final answer. The Buzz harness will publish it as a new top-level message in this channel or direct message so it remains visible in the normal conversation timeline. Do not separately send the same text with `buzz messages send`. If you need to deliver files, send those attachments top-level through `buzz messages send --file <path>`, then summarize them in the final answer."
+            format!("[Scheduled Task Delivery]\nReturn the result as your final answer. The Buzz harness will publish it as a new top-level message in this channel or direct message so it remains visible in the normal conversation timeline. Do not separately send the same text with `buzz messages send`. Every CLI message used for coordination, delegation, or file delivery during this scheduled turn must omit `--reply-to`; the scheduled trigger is hidden and can never be a conversation root. If you need to deliver files, send those attachments top-level through `buzz messages send --file <path>`, then summarize them in the final answer.{creator_hint}")
         } else {
-            "[Scheduled Task Delivery]\nPublish the result as a new top-level message in this channel so it remains visible in the normal conversation timeline. Do not use `--reply-to` with the hidden scheduled-task event. If you send files through `buzz messages send`, keep those sends top-level too."
+            format!("[Scheduled Task Delivery]\nPublish the result as a new top-level message in this channel so it remains visible in the normal conversation timeline. Every CLI message used for coordination, delegation, or file delivery during this scheduled turn must omit `--reply-to`; the scheduled trigger is hidden and can never be a conversation root.{creator_hint}")
         };
-        sections.push(instructions.to_string());
+        sections.push(instructions);
     }
 
     // 3. Conversation context (thread or DM).
@@ -1900,7 +1973,7 @@ pub(crate) fn native_steer_framing() -> (&'static str, &'static str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr::{EventBuilder, Keys, Kind, Timestamp};
+    use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
     use std::time::Duration;
 
     /// Build a test event with the given content and kind.
@@ -4608,10 +4681,16 @@ mod tests {
     #[test]
     fn scheduled_agent_prompt_requires_visible_top_level_delivery() {
         let ch = Uuid::new_v4();
+        let hidden_root = "f".repeat(64);
+        let creator = "1".repeat(64);
         let event = EventBuilder::new(
             Kind::Custom(buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT as u16),
             "[Scheduled Task]\nDo the work",
         )
+        .tags([
+            Tag::parse(["e", hidden_root.as_str(), "", "reply"]).unwrap(),
+            Tag::parse(["created_by", creator.as_str()]).unwrap(),
+        ])
         .sign_with_keys(&Keys::generate())
         .unwrap();
         let batch = FlushBatch {
@@ -4644,6 +4723,57 @@ mod tests {
         assert!(prompt.contains("[Scheduled Task Delivery]"));
         assert!(prompt.contains("harness will publish it as a new top-level message"));
         assert!(prompt.contains("Do not separately send the same text"));
+        assert!(prompt.contains("Every CLI message used for coordination, delegation"));
+        assert!(prompt.contains(&format!("--mention {creator}")));
+        assert!(
+            !prompt.contains(&format!("--reply-to {hidden_root}")),
+            "hidden scheduled events must never become reply anchors"
+        );
+    }
+
+    #[test]
+    fn agent_delegation_to_human_requires_top_level_delivery() {
+        let ch = Uuid::new_v4();
+        let sender_keys = Keys::generate();
+        let sender = sender_keys.public_key().to_hex();
+        let receiving_agent = Keys::generate().public_key().to_hex();
+        let human = Keys::generate().public_key().to_hex();
+        let event = EventBuilder::new(Kind::Custom(9), "Tell the human the result")
+            .tags([
+                Tag::parse(["p", receiving_agent.as_str()]).unwrap(),
+                Tag::parse(["p", human.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&sender_keys)
+            .unwrap();
+        let batch = FlushBatch {
+            channel_id: ch,
+            events: vec![BatchEvent {
+                event,
+                prompt_tag: "@mention".into(),
+                received_at: Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+        let profiles = HashMap::from([
+            (sender, profile(true)),
+            (receiving_agent, profile(true)),
+            (human, profile(false)),
+        ]);
+
+        let prompt = format_prompt(
+            &batch,
+            &FormatPromptArgs {
+                profile_lookup: Some(&profiles),
+                ..Default::default()
+            },
+        )
+        .join("\n\n");
+
+        assert!(prompt.contains("Another Agent is delegating a human-facing delivery"));
+        assert!(prompt.contains("new top-level message"));
+        assert!(prompt.contains("Do not only reply to the delegating Agent"));
+        assert!(!prompt.contains("on `buzz messages send` so the conversation stays threaded"));
     }
 
     #[test]

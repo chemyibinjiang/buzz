@@ -389,3 +389,11 @@
 - 处理：Workflow 详情新增 Stop / Resume，分别把定义的 `enabled` 写为 `false` / `true`，保留历史和手动 Trigger；状态与列表通过既有 query invalidation 刷新。ACP prompt 写入增加“完整请求帧已 flush”握手，只有跨过该边界后控制信号才可取消 turn，防止 prompt 与 cancel 粘连。kind:40009 到达正在工作的同一会话时只排队，不再 steer / cancel 当前人工回复或另一个定时任务。所有定时 turn 都改由 harness 捕获 final answer、签名并发布为所属 Channel 或 DM 的顶层 kind:9 消息；提示明确禁止 Agent 再重复发送同一段文本，普通人工消息的回复锚点保持原样。
 - 验证：`cargo check -p buzz-acp`、Rustfmt、Desktop TypeScript typecheck、`pnpm build:e2e` 与 `git diff --check` 通过；定时任务 Rust 聚焦测试覆盖非 task-bound 任务也由 harness 投递、顶层消息无隐藏 reply root、Workflow/source 标签、定时事件不打断 in-flight turn 与普通回复不回归。`scheduled-agent-task.spec.ts` 5/5 通过，新增用例真实点击 Stop / Resume 并确认保存的 Workflow YAML 在 `enabled: false` 与 `enabled: true` 间切换。
 - 版本/提交：`Lin/develop` 当前工作区，待提交；基线为 `54561655`。
+
+## 2026-10-15：定时任务委派另一个 Agent 后，结果只进入 Inbox/thread
+
+- 现象：用户设置定时任务，让 Agent A 通知 Agent B 向用户问好。Workflow run 显示 completed，Agent A 的任务总结出现在 Channel，但 Agent B 的实际问候只在 Inbox/thread 中可见；打开 thread 还提示 `Some message context could not be loaded`，Channel 主时间线或用户私聊均没有该交付。
+- 诊断：定时任务的 kind:40009 是隐藏 Relay 控制事件，但 prompt 格式化仍把它当作普通人类顶层消息，为 Agent A 生成指向该隐藏事件的 `--reply-to`。A 的委派因此挂在不可见根下，B 的回复继续嵌套；Desktop 能从 Inbox 的 mention 索引看到子事件，却无法加载隐藏根或把回复放入普通时间线。另外，A 的委派只 p-tag 了 B，把任务创建者写成普通文本，B 的 harness 无法判断这是面向人的最终交付。
+- 处理：scheduled turn 现在完全忽略隐藏事件的 thread 结构，不生成 reply anchor，并明确要求协调、委派、附件等所有 CLI send 均不得使用 `--reply-to`。提示会把经过验证的 `created_by` pubkey 提供给 A，要求面向创建者的委派使用显式 `--mention`。当 B 收到“Agent 发送者 + 人类 p-tag”的委派时，prompt 明确要求顶层 Channel/DM 交付；task-bound harness 同样强制最终答案无 `e` thread 标签，并自动保留人类接收者的 p-tag，因此不依赖模型自行选择正确回复位置。
+- 验证：新增聚焦回归覆盖带隐藏 `e/reply` 标签的 scheduled event 不生成 `--reply-to`、scheduled prompt 包含创建者明确 mention 指令、Agent→Agent→human 委派生成顶层交付提示，以及 task-bound harness 的最终事件无 `e` 标签并保留人类 `p` 标签。新增 3 项聚焦测试、scheduled 相关 8 项和 reply-anchor 相关 7 项均通过；`cargo check -p buzz-acp`、`cargo clippy -p buzz-acp --lib --no-deps -- -D warnings`、Rustfmt 与 `git diff --check` 通过。
+- 版本/提交：`Lin/develop` 当前工作区，基线 `5bbbb50b`，待提交。

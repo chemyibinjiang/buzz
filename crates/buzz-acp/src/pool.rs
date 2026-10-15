@@ -5151,11 +5151,53 @@ fn harness_owns_final_answer(task_bound: bool, trigger: &nostr::Event) -> bool {
     task_bound || trigger.kind.as_u16() as u32 == buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT
 }
 
+/// Human recipients explicitly tagged on an Agent-authored delegation.
+///
+/// The triggering Agent is coordinating work, but the tagged human is the
+/// actual delivery target. Returning these pubkeys lets task-bound harness
+/// delivery publish at the conversation top level and preserve the human
+/// mention even when the model's final text omits an `@Name` token.
+fn delegated_human_recipients(
+    trigger: &nostr::Event,
+    profiles: Option<&PromptProfileLookup>,
+) -> Vec<String> {
+    let Some(profiles) = profiles else {
+        return Vec::new();
+    };
+    let sender = trigger.pubkey.to_hex().to_ascii_lowercase();
+    let sender_is_agent = profiles
+        .get(&sender)
+        .is_some_and(|profile| profile.is_agent);
+    if !sender_is_agent {
+        return Vec::new();
+    }
+
+    let mut recipients = Vec::new();
+    for tag in trigger.tags.iter() {
+        let parts = tag.as_slice();
+        let Some(pubkey) = (parts.first().map(String::as_str) == Some("p"))
+            .then(|| parts.get(1))
+            .flatten()
+        else {
+            continue;
+        };
+        let normalized = pubkey.trim().to_ascii_lowercase();
+        let is_known_human = profiles
+            .get(&normalized)
+            .is_some_and(|profile| !profile.is_agent);
+        if is_known_human && !recipients.contains(&normalized) {
+            recipients.push(normalized);
+        }
+    }
+    recipients
+}
+
 fn build_harness_final_answer(
     channel_id: Uuid,
     content: &str,
     trigger: &nostr::Event,
     mention_pubkeys: &[String],
+    force_top_level: bool,
 ) -> Result<nostr::EventBuilder, String> {
     let is_scheduled = trigger.kind.as_u16() as u32 == buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT;
     let workflow_id = if is_scheduled {
@@ -5163,7 +5205,7 @@ fn build_harness_final_answer(
     } else {
         None
     };
-    let thread_ref = if is_scheduled {
+    let thread_ref = if is_scheduled || force_top_level {
         None
     } else {
         let thread_tags = crate::queue::parse_thread_tags(trigger);
@@ -5236,13 +5278,25 @@ async fn publish_harness_final_answer(
     } else {
         None
     };
-    let mention_pubkeys = task_bound_reply_mentions(
+    let routing_profiles = channel_profiles.as_ref().or(profiles);
+    let mut mention_pubkeys = task_bound_reply_mentions(
         content,
-        channel_profiles.as_ref().or(profiles),
+        routing_profiles,
         &ctx.rest_client.keys.public_key().to_hex(),
     );
-    let builder = match build_harness_final_answer(*channel_id, content, trigger, &mention_pubkeys)
-    {
+    let delegated_recipients = delegated_human_recipients(trigger, routing_profiles);
+    for recipient in &delegated_recipients {
+        if !mention_pubkeys.contains(recipient) {
+            mention_pubkeys.push(recipient.clone());
+        }
+    }
+    let builder = match build_harness_final_answer(
+        *channel_id,
+        content,
+        trigger,
+        &mention_pubkeys,
+        !delegated_recipients.is_empty(),
+    ) {
         Ok(builder) => builder,
         Err(error) => {
             tracing::warn!(channel = %channel_id, "harness reply build failed: {error}");
@@ -6714,6 +6768,7 @@ mod tests {
             "scheduled result",
             &trigger,
             std::slice::from_ref(&mentioned),
+            false,
         )
         .unwrap()
         .sign_with_keys(&Keys::generate())
@@ -6765,10 +6820,11 @@ mod tests {
         .sign_with_keys(&Keys::generate())
         .unwrap();
 
-        let event = build_harness_final_answer(channel_id, "scheduled result", &trigger, &[])
-            .unwrap()
-            .sign_with_keys(&Keys::generate())
-            .unwrap();
+        let event =
+            build_harness_final_answer(channel_id, "scheduled result", &trigger, &[], false)
+                .unwrap()
+                .sign_with_keys(&Keys::generate())
+                .unwrap();
 
         assert!(event
             .tags
@@ -6789,7 +6845,7 @@ mod tests {
             .unwrap();
         let trigger_id = trigger.id.to_hex();
 
-        let event = build_harness_final_answer(channel_id, "answer", &trigger, &[])
+        let event = build_harness_final_answer(channel_id, "answer", &trigger, &[], false)
             .unwrap()
             .sign_with_keys(&Keys::generate())
             .unwrap();
@@ -6799,6 +6855,62 @@ mod tests {
             parts.first().map(String::as_str) == Some("e")
                 && parts.get(1).map(String::as_str) == Some(trigger_id.as_str())
                 && parts.get(3).map(String::as_str) == Some("reply")
+        }));
+    }
+
+    #[test]
+    fn delegated_human_answer_is_top_level_and_preserves_recipient() {
+        let channel_id = Uuid::new_v4();
+        let sender_keys = Keys::generate();
+        let sender = sender_keys.public_key().to_hex();
+        let receiving_agent = Keys::generate().public_key().to_hex();
+        let human = Keys::generate().public_key().to_hex();
+        let trigger = EventBuilder::new(Kind::Custom(9), "Please notify the human")
+            .tags([
+                Tag::parse(["p", receiving_agent.as_str()]).unwrap(),
+                Tag::parse(["p", human.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&sender_keys)
+            .unwrap();
+        let profiles = PromptProfileLookup::from([
+            (
+                sender,
+                PromptProfile {
+                    is_agent: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                receiving_agent,
+                PromptProfile {
+                    is_agent: true,
+                    ..Default::default()
+                },
+            ),
+            (human.clone(), PromptProfile::default()),
+        ]);
+
+        let recipients = delegated_human_recipients(&trigger, Some(&profiles));
+        assert_eq!(recipients, vec![human.clone()]);
+        let event = build_harness_final_answer(
+            channel_id,
+            "Delivery complete",
+            &trigger,
+            &recipients,
+            true,
+        )
+        .unwrap()
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+
+        assert!(event
+            .tags
+            .iter()
+            .all(|tag| tag.as_slice().first().map(String::as_str) != Some("e")));
+        assert!(event.tags.iter().any(|tag| {
+            let parts = tag.as_slice();
+            parts.first().map(String::as_str) == Some("p")
+                && parts.get(1).map(String::as_str) == Some(human.as_str())
         }));
     }
 
