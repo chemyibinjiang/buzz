@@ -381,3 +381,11 @@
 - 处理：task-bound Agent 遇到定时指令时将最终答案发布为当前频道的顶层 kind:9 消息，不再回复隐藏的 kind:40009；结果继续携带 Workflow ID 与 scheduled-task 来源标签。普通聊天消息和可见线程仍保持原有 reply anchoring。非自动交付 Agent 的提示也明确要求定时任务结果和附件作为顶层消息发送。
 - 验证：真实 Relay 数据确认同一 DM 中 kind:40009 触发事件之后的 Agent kind:9 回复带有指向该隐藏事件的 `e/reply` 标签，复现了 Inbox 可见但聊天时间线不可见的路径。新增 4 项聚焦回归，覆盖提示要求顶层交付、task-bound 定时结果无 `e` 标签、缺少 Workflow 标签时仍保持顶层，以及普通消息仍按原规则回复可见触发事件，全部通过；`cargo check -p buzz-acp`、Rustfmt 与 `git diff --check` 通过。完整 `cargo test -p buzz-acp --lib` 在 Windows 因既有测试依赖 Unix `cat` 命令而有 69 项失败（772 项通过）；`cargo clippy -p buzz-acp --lib -- -D warnings` 被 `buzz-core/src/agent_handoff.rs` 的既有 `needless_as_bytes` 告警阻断，均与本轮改动无关。
 - 版本/提交：Buzz Codex Lab `0.5.19-heartbeat-conversation-fix`，功能提交 `cef61bf2`。
+
+## 2026-10-15：定时任务缺少停止控制，部分结果仍未进入 Channel / DM 时间线
+
+- 现象：Workflow 详情只有 Edit 和 Trigger，没有停止定时执行的按钮；定时任务 run 显示 `completed`，但用户仍只能在 Inbox 观察到相关通知，所属 Channel 或 Agent 私聊内没有稳定出现最终回复。
+- 诊断：`completed` 只代表 Relay 的 `prompt_agent` 步骤已发布隐藏的 kind:40009 指令，不代表 Agent 已完成回答。本机目标 Agent 日志进一步确认，任务重叠时控制信号可能在 `session/prompt` JSON 已写入、但 NDJSON 换行尚未写入的 await 边界取消该 future，随后 `session/cancel` 被直接拼到同一行；codex-acp 报 `Unexpected non-whitespace character after JSON` 并重启，因此该轮没有 final answer 可供时间线展示。现有自动顶层投递还只覆盖 task-bound Agent，其他 Agent 仍依赖提示词自行发送，不是确定性路径。
+- 处理：Workflow 详情新增 Stop / Resume，分别把定义的 `enabled` 写为 `false` / `true`，保留历史和手动 Trigger；状态与列表通过既有 query invalidation 刷新。ACP prompt 写入增加“完整请求帧已 flush”握手，只有跨过该边界后控制信号才可取消 turn，防止 prompt 与 cancel 粘连。kind:40009 到达正在工作的同一会话时只排队，不再 steer / cancel 当前人工回复或另一个定时任务。所有定时 turn 都改由 harness 捕获 final answer、签名并发布为所属 Channel 或 DM 的顶层 kind:9 消息；提示明确禁止 Agent 再重复发送同一段文本，普通人工消息的回复锚点保持原样。
+- 验证：`cargo check -p buzz-acp`、Rustfmt、Desktop TypeScript typecheck、`pnpm build:e2e` 与 `git diff --check` 通过；定时任务 Rust 聚焦测试覆盖非 task-bound 任务也由 harness 投递、顶层消息无隐藏 reply root、Workflow/source 标签、定时事件不打断 in-flight turn 与普通回复不回归。`scheduled-agent-task.spec.ts` 5/5 通过，新增用例真实点击 Stop / Resume 并确认保存的 Workflow YAML 在 `enabled: false` 与 `enabled: true` 间切换。
+- 版本/提交：`Lin/develop` 当前工作区，待提交；基线为 `54561655`。

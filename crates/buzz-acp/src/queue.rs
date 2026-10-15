@@ -1564,6 +1564,10 @@ pub struct FormatPromptArgs<'a> {
     /// shared-runtime agent. This compact reminder prevents duplicate CLI
     /// sends and keeps per-agent credentials out of the shared Codex process.
     pub task_bound_auto_delivery: bool,
+    /// Scheduled instructions are hidden relay-only events. Their final ACP
+    /// answer is therefore always published by the harness as a visible,
+    /// top-level channel/DM message, including for non-task-bound agents.
+    pub scheduled_auto_delivery: bool,
     /// Set once this session's standing context has already been delivered —
     /// see [`StandingContext`]. Only meaningful for legacy agents; modern
     /// agents are gated by `has_system_prompt_support` regardless.
@@ -1709,7 +1713,7 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         sections.push(handoff.to_string());
     }
 
-    if args.task_bound_auto_delivery {
+    if args.task_bound_auto_delivery || args.scheduled_auto_delivery {
         sections.push(
             "[Buzz Delivery]\nReturn ordinary user-visible text as your final answer; the Buzz harness signs and publishes it to this conversation. The shared Codex app-server intentionally has no Agent Buzz credentials: run every `buzz` CLI command through this session's `buzz-dev-mcp` `shell` tool, never through Codex's native shell or `exec_command`. A native-shell `BUZZ_PRIVATE_KEY` error means the wrong tool path was used, not that the Agent must reconnect or be recreated. If you need to deliver one or more files, run `buzz messages send --file <path>` through `buzz-dev-mcp` so the files become real attachments, then return a brief delivery summary as your final answer. Do not paste a local path or a bare upload URL as a substitute for an attachment."
                 .to_string(),
@@ -1747,10 +1751,12 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         reply_anchor.as_deref(),
     ));
     if is_scheduled_agent_prompt {
-        sections.push(
+        let instructions = if args.scheduled_auto_delivery {
+            "[Scheduled Task Delivery]\nReturn the result as your final answer. The Buzz harness will publish it as a new top-level message in this channel or direct message so it remains visible in the normal conversation timeline. Do not separately send the same text with `buzz messages send`. If you need to deliver files, send those attachments top-level through `buzz messages send --file <path>`, then summarize them in the final answer."
+        } else {
             "[Scheduled Task Delivery]\nPublish the result as a new top-level message in this channel so it remains visible in the normal conversation timeline. Do not use `--reply-to` with the hidden scheduled-task event. If you send files through `buzz messages send`, keep those sends top-level too."
-                .to_string(),
-        );
+        };
+        sections.push(instructions.to_string());
     }
 
     // 3. Conversation context (thread or DM).
@@ -4628,14 +4634,16 @@ mod tests {
             &batch,
             &FormatPromptArgs {
                 channel_info: Some(&ci),
+                scheduled_auto_delivery: true,
                 ..Default::default()
             },
         )
         .join("\n\n");
 
+        assert!(prompt.contains("[Buzz Delivery]"));
         assert!(prompt.contains("[Scheduled Task Delivery]"));
-        assert!(prompt.contains("new top-level message"));
-        assert!(prompt.contains("Do not use `--reply-to`"));
+        assert!(prompt.contains("harness will publish it as a new top-level message"));
+        assert!(prompt.contains("Do not separately send the same text"));
     }
 
     #[test]

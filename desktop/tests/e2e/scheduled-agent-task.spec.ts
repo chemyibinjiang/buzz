@@ -194,3 +194,36 @@ test("scheduled tasks remain listed through the relay-wide accessible query", as
   );
   expect(usedAccessibleQuery).toBe(true);
 });
+
+test("scheduled tasks can be stopped and resumed from the detail panel", async ({
+  page,
+}) => {
+  const dialog = page.getByRole("dialog", { name: "Schedule a task" });
+  await dialog
+    .getByLabel("Instructions", { exact: true })
+    .fill("Check the deployment every five minutes");
+  await dialog.locator("#task-repeat").selectOption("heartbeat");
+  await dialog.getByLabel("Every", { exact: true }).fill("5");
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+
+  await page
+    .getByRole("button", {
+      name: "View Check the deployment every five minutes",
+    })
+    .click();
+
+  const panel = page.getByTestId("workflow-detail-panel");
+  await panel.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(
+    panel.getByRole("button", { name: "Resume", exact: true }),
+  ).toBeVisible();
+  let updated = await savedDefinition(page, "update_workflow");
+  expect(updated.definition.enabled).toBe(false);
+
+  await panel.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(
+    panel.getByRole("button", { name: "Stop", exact: true }),
+  ).toBeVisible();
+  updated = await savedDefinition(page, "update_workflow");
+  expect(updated.definition.enabled).toBe(true);
+});

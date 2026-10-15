@@ -2780,6 +2780,9 @@ pub async fn run_prompt_task(
                 standing_context_sent,
                 task_handoff: task_handoff.as_deref(),
                 task_bound_auto_delivery: ctx.codex_task_binding.is_some(),
+                scheduled_auto_delivery: b.events.last().is_some_and(|event| {
+                    event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT
+                }),
             },
         );
         turn_profile_lookup = profile_lookup;
@@ -2891,168 +2894,196 @@ pub async fn run_prompt_task(
             }
         }
         Some(rx) => {
-            tokio::select! {
-                biased;
-                result = agent.acp.session_prompt_content_with_idle_timeout(
+            let (prompt_started_tx, prompt_started_rx) = tokio::sync::oneshot::channel();
+            let mut prompt_future =
+                Box::pin(agent.acp.session_prompt_content_with_idle_timeout_started(
                     &session_id,
                     &prompt_content,
                     ctx.idle_timeout,
                     ctx.max_turn_duration,
-                ) => result,
-                mode = rx => {
-                    let control_signal = mode.unwrap_or(ControlSignal::Cancel);
-                    let discard_durable_session =
-                        control_signal_discards_session(&control_signal);
-                    // Land the model switch before any cancel/requeue work: setting
-                    // `desired_model` here means the fresh session created by the
-                    // requeued turn (busy) or the next turn (already-completed)
-                    // applies the new model. Runtime-only — never persisted.
-                    if let ControlSignal::SwitchModel(ref model_id) = control_signal {
-                        agent.desired_model = Some(model_id.clone());
-                        agent.model_overridden = true;
-                    }
-                    // Control signal received. Guard against Race 1: the turn may
-                    // have completed naturally just as cancel fired.
-                    if agent.acp.has_in_flight_prompt() {
-                        // Prompt is genuinely in-flight — cancel it.
-                        match agent
-                            .acp
-                            .cancel_with_cleanup_grace(&session_id, CONTROL_CANCEL_GRACE)
-                            .await
-                        {
-                            Ok(stop_reason) => {
-                                log_stop_reason(&source, &stop_reason);
-                                agent.state.invalidate(&source);
-                                if discard_durable_session {
-                                    clear_durable_source_binding(&ctx, &source);
-                                }
-                                let retry_batch =
-                                    requeue_cancelled_batch(&ctx, control_signal, batch);
+                    prompt_started_tx,
+                ));
+            let mut control_rx = rx;
 
-                                let usage = agent.acp.take_turn_usage();
-                                publish_agent_turn_metric(
-                                    &ctx,
-                                    usage,
-                                    observer_channel_id,
-                                    &session_id,
-                                    &turn_id,
-                                    Some(buzz_core::agent_turn_metric::StopReason::Cancelled),
-                                )
-                                .await;
-                                send_prompt_result(
-                                    &result_tx,
-                                    &turn_id,
-                                    agent,
-                                    source,
-                                    PromptOutcome::Cancelled,
-                                    retry_batch,
-                                );
-                                return;
-                            }
-                            Err(error) => {
-                                // Single production arm: classify the error→outcome
-                                // and outcome→batch-fate boundary once via the seam
-                                // shared with tests, then invalidate/publish/send once.
-                                let failure = classify_control_cancel_failure(
-                                    &ctx,
-                                    error,
-                                    control_signal,
-                                    batch,
-                                );
-                                if failure.invalidate_all {
-                                    agent.state.invalidate_all();
-                                } else {
-                                    agent.state.invalidate(&source);
-                                }
-                                if discard_durable_session {
-                                    clear_durable_source_binding(&ctx, &source);
-                                }
-
-                                let usage = agent.acp.take_turn_usage();
-                                publish_agent_turn_metric(
-                                    &ctx,
-                                    usage,
-                                    observer_channel_id,
-                                    &session_id,
-                                    &turn_id,
-                                    Some(buzz_core::agent_turn_metric::StopReason::Error),
-                                )
-                                .await;
-                                send_prompt_result(
-                                    &result_tx,
-                                    &turn_id,
-                                    agent,
-                                    source,
-                                    failure.outcome,
-                                    failure.retry_batch,
-                                );
-                                return;
-                            }
-                        }
+            // Do not make the turn cancellable until the entire prompt frame,
+            // including its NDJSON newline, has been flushed. A control signal
+            // may arrive while this handshake runs; the oneshot retains it and
+            // the second select handles it immediately after the safe boundary.
+            let completed_before_start = tokio::select! {
+                biased;
+                result = &mut prompt_future => Some(result),
+                started = prompt_started_rx => {
+                    if started.is_err() {
+                        Some((&mut prompt_future).await)
                     } else {
-                        // Race 1 resolution: turn completed naturally before cancel
-                        // could fire. last_prompt_id is None — cleared by
-                        // session_prompt_with_idle_timeout() on success. The prompt
-                        // future was dropped by select! — its Ok result is gone.
-                        //
-                        // Note: this `else` branch (last_prompt_id is None) cannot
-                        // fire during the pre-prompt phase because `biased` select!
-                        // polls the prompt arm first. That arm sets last_prompt_id
-                        // synchronously before its first yield point, so by the time
-                        // the cancel arm can win, last_prompt_id is already Some.
-                        // This branch only fires when the turn genuinely completed
-                        // and last_prompt_id was cleared by the success path.
-                        //
-                        // MUST send a PromptResult or the main loop deadlocks.
-                        if matches!(
-                            control_signal,
-                            ControlSignal::Rotate | ControlSignal::SwitchModel(_)
-                        ) {
-                            tracing::debug!(
-                                target: "pool::prompt",
-                                "rotate/switch signal arrived but turn already completed — invalidating session"
-                            );
+                        None
+                    }
+                },
+            };
+            if let Some(result) = completed_before_start {
+                result
+            } else {
+                tokio::select! {
+                    biased;
+                    result = &mut prompt_future => result,
+                    mode = &mut control_rx => {
+                        // Release the mutable ACP borrow held by the prompt future
+                        // before sending the cancellation notification.
+                        drop(prompt_future);
+                        let control_signal = mode.unwrap_or(ControlSignal::Cancel);
+                        let discard_durable_session =
+                            control_signal_discards_session(&control_signal);
+                        // Land the model switch before any cancel/requeue work: setting
+                        // `desired_model` here means the fresh session created by the
+                        // requeued turn (busy) or the next turn (already-completed)
+                        // applies the new model. Runtime-only — never persisted.
+                        if let ControlSignal::SwitchModel(ref model_id) = control_signal {
+                            agent.desired_model = Some(model_id.clone());
+                            agent.model_overridden = true;
+                        }
+                        // Control signal received. Guard against Race 1: the turn may
+                        // have completed naturally just as cancel fired.
+                        if agent.acp.has_in_flight_prompt() {
+                            // Prompt is genuinely in-flight — cancel it.
+                            match agent
+                                .acp
+                                .cancel_with_cleanup_grace(&session_id, CONTROL_CANCEL_GRACE)
+                                .await
+                            {
+                                Ok(stop_reason) => {
+                                    log_stop_reason(&source, &stop_reason);
+                                    agent.state.invalidate(&source);
+                                    if discard_durable_session {
+                                        clear_durable_source_binding(&ctx, &source);
+                                    }
+                                    let retry_batch =
+                                        requeue_cancelled_batch(&ctx, control_signal, batch);
+
+                                    let usage = agent.acp.take_turn_usage();
+                                    publish_agent_turn_metric(
+                                        &ctx,
+                                        usage,
+                                        observer_channel_id,
+                                        &session_id,
+                                        &turn_id,
+                                        Some(buzz_core::agent_turn_metric::StopReason::Cancelled),
+                                    )
+                                    .await;
+                                    send_prompt_result(
+                                        &result_tx,
+                                        &turn_id,
+                                        agent,
+                                        source,
+                                        PromptOutcome::Cancelled,
+                                        retry_batch,
+                                    );
+                                    return;
+                                }
+                                Err(error) => {
+                                    // Single production arm: classify the error→outcome
+                                    // and outcome→batch-fate boundary once via the seam
+                                    // shared with tests, then invalidate/publish/send once.
+                                    let failure = classify_control_cancel_failure(
+                                        &ctx,
+                                        error,
+                                        control_signal,
+                                        batch,
+                                    );
+                                    if failure.invalidate_all {
+                                        agent.state.invalidate_all();
+                                    } else {
+                                        agent.state.invalidate(&source);
+                                    }
+                                    if discard_durable_session {
+                                        clear_durable_source_binding(&ctx, &source);
+                                    }
+
+                                    let usage = agent.acp.take_turn_usage();
+                                    publish_agent_turn_metric(
+                                        &ctx,
+                                        usage,
+                                        observer_channel_id,
+                                        &session_id,
+                                        &turn_id,
+                                        Some(buzz_core::agent_turn_metric::StopReason::Error),
+                                    )
+                                    .await;
+                                    send_prompt_result(
+                                        &result_tx,
+                                        &turn_id,
+                                        agent,
+                                        source,
+                                        failure.outcome,
+                                        failure.retry_batch,
+                                    );
+                                    return;
+                                }
+                            }
                         } else {
-                            tracing::debug!(
-                                target: "pool::prompt",
-                                "control signal arrived but turn already completed — treating as success"
+                            // Race 1 resolution: turn completed naturally before cancel
+                            // could fire. last_prompt_id is None — cleared by
+                            // session_prompt_with_idle_timeout() on success. The prompt
+                            // future was dropped by select! — its Ok result is gone.
+                            //
+                            // Note: this `else` branch (last_prompt_id is None) cannot
+                            // fire during the pre-prompt phase because `biased` select!
+                            // polls the prompt arm first. That arm sets last_prompt_id
+                            // synchronously before its first yield point, so by the time
+                            // the cancel arm can win, last_prompt_id is already Some.
+                            // This branch only fires when the turn genuinely completed
+                            // and last_prompt_id was cleared by the success path.
+                            //
+                            // MUST send a PromptResult or the main loop deadlocks.
+                            if matches!(
+                                control_signal,
+                                ControlSignal::Rotate | ControlSignal::SwitchModel(_)
+                            ) {
+                                tracing::debug!(
+                                    target: "pool::prompt",
+                                    "rotate/switch signal arrived but turn already completed — invalidating session"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    target: "pool::prompt",
+                                    "control signal arrived but turn already completed — treating as success"
+                                );
+                            }
+                            if let PromptSource::Channel(cid) = &source {
+                                let standing_sent = !agent.has_system_prompt_support();
+                                agent.state.mark_channel_delivery_success(
+                                    *cid,
+                                    standing_sent,
+                                    pending_delivered_event_ids.iter().cloned(),
+                                );
+                            }
+                            apply_completed_before_control_signal(
+                                &mut agent.state,
+                                &source,
+                                &control_signal,
                             );
-                        }
-                        if let PromptSource::Channel(cid) = &source {
-                            let standing_sent = !agent.has_system_prompt_support();
-                            agent.state.mark_channel_delivery_success(
-                                *cid,
-                                standing_sent,
-                                pending_delivered_event_ids.iter().cloned(),
+                            if discard_durable_session {
+                                clear_durable_source_binding(&ctx, &source);
+                            }
+                            let usage = agent.acp.take_turn_usage();
+                            publish_agent_turn_metric(
+                                &ctx,
+                                usage,
+                                observer_channel_id,
+                                &session_id,
+                                &turn_id,
+                                Some(buzz_core::agent_turn_metric::StopReason::EndTurn),
+                            )
+                            .await;
+                            send_prompt_result(
+                                &result_tx,
+                                &turn_id,
+                                agent,
+                                source,
+                                PromptOutcome::Ok(StopReason::EndTurn),
+                                None, // turn succeeded — batch was processed, no requeue
                             );
+                            return;
                         }
-                        apply_completed_before_control_signal(
-                            &mut agent.state,
-                            &source,
-                            &control_signal,
-                        );
-                        if discard_durable_session {
-                            clear_durable_source_binding(&ctx, &source);
-                        }
-                        let usage = agent.acp.take_turn_usage();
-                        publish_agent_turn_metric(
-                            &ctx,
-                            usage,
-                            observer_channel_id,
-                            &session_id,
-                            &turn_id,
-                            Some(buzz_core::agent_turn_metric::StopReason::EndTurn),
-                        )
-                        .await;
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
-                            PromptOutcome::Ok(StopReason::EndTurn),
-                            None, // turn succeeded — batch was processed, no requeue
-                        );
-                        return;
                     }
                 }
             }
@@ -3074,8 +3105,18 @@ pub async fn run_prompt_task(
                 agent.state.heartbeat_standing_context_sent = true;
             }
 
-            let final_answer = agent.acp.take_turn_final_answer();
-            publish_task_bound_final_answer(
+            let harness_owns_delivery = batch
+                .as_ref()
+                .and_then(|batch| batch.events.last())
+                .is_some_and(|event| {
+                    harness_owns_final_answer(ctx.codex_task_binding.is_some(), &event.event)
+                });
+            let final_answer = agent.acp.take_turn_final_answer().or_else(|| {
+                harness_owns_delivery
+                    .then(|| agent.acp.take_turn_output_text())
+                    .flatten()
+            });
+            publish_harness_final_answer(
                 &ctx,
                 &source,
                 batch.as_ref(),
@@ -5002,7 +5043,7 @@ pub(crate) async fn post_failure_notice(
     }
 }
 
-/// Resolve visible @mentions in an automatically published task-bound reply
+/// Resolve visible @mentions in an automatically published harness reply
 /// to the profile keys already loaded for the current prompt.
 fn task_bound_reply_mentions(
     content: &str,
@@ -5106,7 +5147,11 @@ fn scheduled_workflow_id(trigger: &nostr::Event) -> Option<&str> {
     })
 }
 
-fn build_task_bound_final_answer(
+fn harness_owns_final_answer(task_bound: bool, trigger: &nostr::Event) -> bool {
+    task_bound || trigger.kind.as_u16() as u32 == buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT
+}
+
+fn build_harness_final_answer(
     channel_id: Uuid,
     content: &str,
     trigger: &nostr::Event,
@@ -5158,24 +5203,20 @@ fn build_task_bound_final_answer(
     Ok(builder)
 }
 
-/// Publish the final ACP answer for a task-bound Codex identity.
+/// Publish the final ACP answer when delivery is owned by the harness.
 ///
-/// The harness already owns this managed agent's signing key. Keeping delivery
-/// here avoids placing a per-agent private key in the long-lived shared Codex
-/// app-server while preserving the same flat reply anchoring used by Buzz.
-/// Scheduled-task results are the exception: their trigger is relay-only and
-/// hidden from the normal timeline, so the result must be a visible top-level
-/// message rather than a reply whose root the user cannot open from the chat.
-async fn publish_task_bound_final_answer(
+/// Task-bound Codex identities use this for every answer because the shared
+/// app-server intentionally has no per-agent Buzz credential. Scheduled tasks
+/// use it for every agent: their trigger is relay-only and hidden from the
+/// normal timeline, so the result must be a visible top-level message rather
+/// than a reply whose root the user cannot open from the chat.
+async fn publish_harness_final_answer(
     ctx: &PromptContext,
     source: &PromptSource,
     batch: Option<&FlushBatch>,
     content: Option<&str>,
     profiles: Option<&PromptProfileLookup>,
 ) {
-    if ctx.codex_task_binding.is_none() {
-        return;
-    }
     let (PromptSource::Channel(channel_id), Some(batch), Some(content)) = (
         source,
         batch,
@@ -5186,6 +5227,9 @@ async fn publish_task_bound_final_answer(
     let Some(trigger) = batch.events.last().map(|event| &event.event) else {
         return;
     };
+    if !harness_owns_final_answer(ctx.codex_task_binding.is_some(), trigger) {
+        return;
+    }
 
     let channel_profiles = if content.contains('@') {
         fetch_channel_member_profiles(*channel_id, &ctx.rest_client).await
@@ -5197,18 +5241,18 @@ async fn publish_task_bound_final_answer(
         channel_profiles.as_ref().or(profiles),
         &ctx.rest_client.keys.public_key().to_hex(),
     );
-    let builder =
-        match build_task_bound_final_answer(*channel_id, content, trigger, &mention_pubkeys) {
-            Ok(builder) => builder,
-            Err(error) => {
-                tracing::warn!(channel = %channel_id, "task-bound reply build failed: {error}");
-                return;
-            }
-        };
+    let builder = match build_harness_final_answer(*channel_id, content, trigger, &mention_pubkeys)
+    {
+        Ok(builder) => builder,
+        Err(error) => {
+            tracing::warn!(channel = %channel_id, "harness reply build failed: {error}");
+            return;
+        }
+    };
     let event = match builder.sign_with_keys(&ctx.rest_client.keys) {
         Ok(event) => event,
         Err(error) => {
-            tracing::warn!(channel = %channel_id, "task-bound reply signing failed: {error}");
+            tracing::warn!(channel = %channel_id, "harness reply signing failed: {error}");
             return;
         }
     };
@@ -5221,12 +5265,12 @@ async fn publish_task_bound_final_answer(
         Ok(Ok(_)) => tracing::info!(
             channel = %channel_id,
             event_id = %event.id,
-            "task-bound final answer published"
+            "harness final answer published"
         ),
         Ok(Err(error)) => {
-            tracing::warn!(channel = %channel_id, "task-bound reply failed: {error}")
+            tracing::warn!(channel = %channel_id, "harness reply failed: {error}")
         }
-        Err(_) => tracing::warn!(channel = %channel_id, "task-bound reply timed out"),
+        Err(_) => tracing::warn!(channel = %channel_id, "harness reply timed out"),
     }
 }
 
@@ -6665,7 +6709,7 @@ mod tests {
         .unwrap();
         let mentioned = Keys::generate().public_key().to_hex();
 
-        let event = build_task_bound_final_answer(
+        let event = build_harness_final_answer(
             channel_id,
             "scheduled result",
             &trigger,
@@ -6695,6 +6739,23 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_answer_delivery_is_harness_owned_without_task_binding() {
+        let scheduled = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_SCHEDULED_AGENT_PROMPT as u16),
+            "[Scheduled Task]",
+        )
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+        let ordinary = EventBuilder::new(Kind::Custom(9), "ordinary message")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+
+        assert!(harness_owns_final_answer(false, &scheduled));
+        assert!(harness_owns_final_answer(true, &ordinary));
+        assert!(!harness_owns_final_answer(false, &ordinary));
+    }
+
+    #[test]
     fn scheduled_task_without_workflow_tag_is_still_top_level() {
         let channel_id = Uuid::new_v4();
         let trigger = EventBuilder::new(
@@ -6704,7 +6765,7 @@ mod tests {
         .sign_with_keys(&Keys::generate())
         .unwrap();
 
-        let event = build_task_bound_final_answer(channel_id, "scheduled result", &trigger, &[])
+        let event = build_harness_final_answer(channel_id, "scheduled result", &trigger, &[])
             .unwrap()
             .sign_with_keys(&Keys::generate())
             .unwrap();
@@ -6728,7 +6789,7 @@ mod tests {
             .unwrap();
         let trigger_id = trigger.id.to_hex();
 
-        let event = build_task_bound_final_answer(channel_id, "answer", &trigger, &[])
+        let event = build_harness_final_answer(channel_id, "answer", &trigger, &[])
             .unwrap()
             .sign_with_keys(&Keys::generate())
             .unwrap();

@@ -1,9 +1,18 @@
-import { ChevronDown, ChevronRight, Pencil, Play, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Pause,
+  Pencil,
+  Play,
+  X,
+} from "lucide-react";
 import * as React from "react";
+import { stringify as yamlStringify } from "yaml";
 
 import {
   useRunApprovalsQuery,
   useTriggerWorkflowMutation,
+  useUpdateWorkflowMutation,
   useWorkflowQuery,
   useWorkflowRunsQuery,
 } from "@/features/workflows/hooks";
@@ -15,6 +24,7 @@ import { Skeleton } from "@/shared/ui/skeleton";
 import {
   getWorkflowDescription,
   getWorkflowDisplayStatus,
+  getWorkflowEnabled,
   getPromptAgentPubkey,
   getWorkflowSourceKind,
   getWorkflowTriggerSummary,
@@ -35,6 +45,7 @@ export function WorkflowDetailPanel({
   const workflowQuery = useWorkflowQuery(workflowId);
   const runsQuery = useWorkflowRunsQuery(workflowId);
   const triggerMutation = useTriggerWorkflowMutation(workflowId);
+  const updateMutation = useUpdateWorkflowMutation(workflowId);
   const [selectedRunId, setSelectedRunId] = React.useState<string | null>(null);
 
   const workflow = workflowQuery.data;
@@ -47,6 +58,9 @@ export function WorkflowDetailPanel({
     ? getWorkflowTriggerSummary(workflow.definition)
     : null;
   const workflowStatus = workflow ? getWorkflowDisplayStatus(workflow) : null;
+  const workflowEnabled = workflow
+    ? getWorkflowEnabled(workflow.definition)
+    : false;
   const scheduledAgentTask = workflow
     ? isScheduledAgentTask(workflow.definition)
     : false;
@@ -60,6 +74,10 @@ export function WorkflowDetailPanel({
   );
   const selectedRunIsPendingHistory =
     selectedRunId !== null && !runs.some((run) => run.id === selectedRunId);
+  const updateError = errorMessage(
+    updateMutation.error,
+    `The relay did not ${workflowEnabled ? "stop" : "resume"} this workflow.`,
+  );
 
   async function handleTrigger() {
     try {
@@ -67,6 +85,19 @@ export function WorkflowDetailPanel({
       setSelectedRunId(response.runId);
     } catch {
       // React Query stores the error; keep the current selection unchanged.
+    }
+  }
+
+  async function handleEnabledChange() {
+    if (!workflow) return;
+    const definition = {
+      ...workflow.definition,
+      enabled: !workflowEnabled,
+    };
+    try {
+      await updateMutation.mutateAsync(yamlStringify(definition));
+    } catch {
+      // React Query stores the error and keeps the current workflow state.
     }
   }
 
@@ -113,8 +144,33 @@ export function WorkflowDetailPanel({
               Edit
             </Button>
           ) : null}
+          {workflow ? (
+            <Button
+              disabled={updateMutation.isPending}
+              onClick={() => void handleEnabledChange()}
+              size="sm"
+              variant="outline"
+            >
+              {workflowEnabled ? (
+                <Pause className="mr-1 h-4 w-4" />
+              ) : (
+                <Play className="mr-1 h-4 w-4" />
+              )}
+              {updateMutation.isPending
+                ? workflowEnabled
+                  ? "Stopping..."
+                  : "Resuming..."
+                : workflowEnabled
+                  ? "Stop"
+                  : "Resume"}
+            </Button>
+          ) : null}
           <Button
-            disabled={triggerMutation.isPending || workflowQuery.isLoading}
+            disabled={
+              triggerMutation.isPending ||
+              updateMutation.isPending ||
+              workflowQuery.isLoading
+            }
             onClick={() => void handleTrigger()}
             size="sm"
             variant="outline"
@@ -141,6 +197,20 @@ export function WorkflowDetailPanel({
           <p className="font-medium">Failed to trigger workflow</p>
           <p className="mt-1 break-words text-muted-foreground">
             {triggerError}
+          </p>
+        </div>
+      ) : null}
+
+      {updateMutation.isError ? (
+        <div
+          className="border-b px-4 py-2 text-xs text-destructive"
+          role="alert"
+        >
+          <p className="font-medium">
+            Failed to {workflowEnabled ? "stop" : "resume"} workflow
+          </p>
+          <p className="mt-1 break-words text-muted-foreground">
+            {updateError}
           </p>
         </div>
       ) : null}

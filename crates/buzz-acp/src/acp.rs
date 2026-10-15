@@ -982,6 +982,49 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        self.session_prompt_content_with_idle_timeout_inner(
+            session_id,
+            content,
+            idle_timeout,
+            max_duration,
+            None,
+        )
+        .await
+    }
+
+    /// Send a prompt and notify the caller once the complete NDJSON request
+    /// has been written and flushed.
+    ///
+    /// The pool uses this handshake before making a channel turn cancellable.
+    /// Without it, dropping the prompt future between writing the JSON body and
+    /// its trailing newline can concatenate a subsequent `session/cancel` onto
+    /// the same line, which makes adapters reject both messages.
+    pub async fn session_prompt_content_with_idle_timeout_started(
+        &mut self,
+        session_id: &str,
+        content: &[serde_json::Value],
+        idle_timeout: std::time::Duration,
+        max_duration: std::time::Duration,
+        started: tokio::sync::oneshot::Sender<()>,
+    ) -> Result<StopReason, AcpError> {
+        self.session_prompt_content_with_idle_timeout_inner(
+            session_id,
+            content,
+            idle_timeout,
+            max_duration,
+            Some(started),
+        )
+        .await
+    }
+
+    async fn session_prompt_content_with_idle_timeout_inner(
+        &mut self,
+        session_id: &str,
+        content: &[serde_json::Value],
+        idle_timeout: std::time::Duration,
+        max_duration: std::time::Duration,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<StopReason, AcpError> {
         self.turn_final_answer.clear();
         self.turn_output_text.clear();
         let params = build_prompt_content_params(session_id, content);
@@ -1014,6 +1057,9 @@ impl AcpClient {
             self.last_prompt_id = None;
             self.current_hard_deadline = None;
             return Err(e);
+        }
+        if let Some(started) = started {
+            let _ = started.send(());
         }
 
         let result = self
@@ -1274,10 +1320,14 @@ impl AcpClient {
     /// (e.g., it's stuck or dead), the write would otherwise block forever.
     async fn write_ndjson(&mut self, value: &serde_json::Value) -> Result<(), AcpError> {
         const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-        let line = serde_json::to_string(value)?;
+        let mut frame = serde_json::to_vec(value)?;
+        frame.push(b'\n');
         tokio::time::timeout(WRITE_TIMEOUT, async {
-            self.stdin.write_all(line.as_bytes()).await?;
-            self.stdin.write_all(b"\n").await?;
+            // Keep the JSON body and NDJSON delimiter in one write future. In
+            // addition to the pool's prompt-start handshake, this removes the
+            // await boundary that previously allowed cancellation to land
+            // after the body but before the newline.
+            self.stdin.write_all(&frame).await?;
             self.stdin.flush().await?;
             Ok::<(), std::io::Error>(())
         })

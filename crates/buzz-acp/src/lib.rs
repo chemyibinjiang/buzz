@@ -3068,7 +3068,10 @@ async fn tokio_main() -> Result<()> {
                             // Event is already queued. If mode requires it AND
                             // the channel has an in-flight task, fire cancel —
                             // OR take the non-cancelling (ACP steer) fork for Steer signals.
-                            if accepted && queue.is_channel_in_flight(buzz_event.channel_id) {
+                            if accepted
+                                && event_can_signal_in_flight(kind_u32)
+                                && queue.is_channel_in_flight(buzz_event.channel_id)
+                            {
                                 // Author eligibility (owner ∪ allowlist ∪ siblings)
                                 // is already enforced by the inbound author gate
                                 // above, so the mid-turn signal fires for every
@@ -3714,6 +3717,14 @@ fn mode_gate_signal(
             _ => None,
         },
     }
+}
+
+/// Relay-scheduled prompts must never cancel or steer an active conversation.
+/// They are autonomous background work, so queueing them preserves the user's
+/// in-flight answer and prevents simultaneous schedules from repeatedly
+/// cancelling each other before either can produce a visible result.
+fn event_can_signal_in_flight(kind: u32) -> bool {
+    kind != KIND_SCHEDULED_AGENT_PROMPT
 }
 
 /// Send a control signal to the in-flight task for `channel_id`.
@@ -5487,6 +5498,12 @@ mod owner_control_command_tests {
             mode_gate_signal(MultipleEventHandling::OwnerInterrupt, &owner, None).is_none(),
             "owner-interrupt must not fire when the owner is unknown"
         );
+    }
+
+    #[test]
+    fn scheduled_prompts_wait_for_an_in_flight_turn() {
+        assert!(!event_can_signal_in_flight(KIND_SCHEDULED_AGENT_PROMPT));
+        assert!(event_can_signal_in_flight(KIND_STREAM_MESSAGE));
     }
 
     #[tokio::test]
