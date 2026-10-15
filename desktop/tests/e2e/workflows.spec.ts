@@ -2,8 +2,13 @@ import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
 
-test.beforeEach(async ({ page }) => {
-  await installMockBridge(page);
+test.beforeEach(async ({ page }, testInfo) => {
+  await installMockBridge(
+    page,
+    testInfo.title.includes("keeps the workflow when deletion fails")
+      ? { deleteWorkflowError: "mock workflow deletion failed" }
+      : undefined,
+  );
 });
 
 async function navigateToWorkflows(page: import("@playwright/test").Page) {
@@ -217,6 +222,23 @@ test("deletes a workflow with confirmation", async ({ page }) => {
 
   // Verify workflow is gone — back to empty state
   await expect(page.getByText("No workflows yet")).toBeVisible();
+});
+
+test("keeps the workflow when deletion fails", async ({ page }) => {
+  const workflowName = `delete_failure_${Date.now()}`;
+
+  await navigateToWorkflows(page);
+  await createWorkflow(page, workflowName);
+  await page.getByRole("button", { name: "Workflow actions" }).first().click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByRole("button", { name: "Delete" }).click();
+
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Delete" })).toBeEnabled();
+  await expect(page.getByText("Couldn't delete workflow")).toBeVisible();
+  await expect(page.getByTestId("workflows-view")).toContainText(workflowName);
 });
 
 test("triggers a workflow from the detail panel", async ({ page }) => {

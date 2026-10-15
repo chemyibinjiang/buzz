@@ -117,6 +117,15 @@ fn tag_value_reads_d_and_h_and_misses_absent() {
 }
 
 #[test]
+fn workflow_delete_uses_definition_author_not_current_identity() {
+    let ev = wf_event(WF, CHAN, YAML);
+    let current_identity = Keys::generate().public_key().to_hex();
+
+    assert_eq!(workflow_definition_owner(&ev), ev.pubkey.to_hex());
+    assert_ne!(workflow_definition_owner(&ev), current_identity);
+}
+
+#[test]
 fn workflow_record_shapes_save_inputs() {
     let wf = workflow_record(
         WF.to_string(),

@@ -2099,19 +2099,22 @@ async fn handle_a_tag_deletion(
         .map_err(|_| anyhow::anyhow!("invalid kind in a-tag"))?;
     let pubkey_hex = parts[1];
     let d_tag = parts[2];
-    let actor_bytes = effective_message_author(event, &state.relay_keypair.public_key());
-
     match kind_num {
         // kind:30350 revocation is exclusively a higher-generation inactive replacement.
         super::push_lease::KIND_PUSH_LEASE => {
             tracing::debug!(d_tag, "NIP-09 deletion ignored for push lease");
         }
         buzz_core::kind::KIND_WORKFLOW_DEF => {
+            // The a-tag coordinate is authoritative for the definition owner.
+            // The deletion actor may instead be the owning human of an agent,
+            // which is authorized by `validate_standard_deletion_event`.
+            let target_pubkey_bytes = decode_a_tag_pubkey(pubkey_hex)?;
+
             // Try UUID first (workflow_id); fall back to name-based lookup.
-            if let Ok(wf_id) = uuid::Uuid::parse_str(d_tag) {
+            let definition_d_tag = if let Ok(wf_id) = uuid::Uuid::parse_str(d_tag) {
                 let channel_id = state
                     .db
-                    .delete_workflow_for_owner(tenant.community(), wf_id, &actor_bytes)
+                    .delete_workflow_for_owner(tenant.community(), wf_id, &target_pubkey_bytes)
                     .await
                     .map_err(|e| anyhow::anyhow!("failed to delete workflow {wf_id}: {e}"))?;
                 if let Some(channel_id) = channel_id {
@@ -2120,17 +2123,26 @@ async fn handle_a_tag_deletion(
                         .invalidate_channel_workflows(tenant.community(), channel_id);
                 }
                 tracing::info!(workflow_id = %wf_id, "Workflow deleted via NIP-09 a-tag (UUID)");
+                wf_id.to_string()
             } else {
                 // Name-based lookup
                 match state
                     .db
-                    .find_workflow_by_owner_and_name(tenant.community(), &actor_bytes, d_tag)
+                    .find_workflow_by_owner_and_name(
+                        tenant.community(),
+                        &target_pubkey_bytes,
+                        d_tag,
+                    )
                     .await
                 {
                     Ok(Some(wf)) => {
                         let channel_id = state
                             .db
-                            .delete_workflow_for_owner(tenant.community(), wf.id, &actor_bytes)
+                            .delete_workflow_for_owner(
+                                tenant.community(),
+                                wf.id,
+                                &target_pubkey_bytes,
+                            )
                             .await
                             .map_err(|e| {
                                 anyhow::anyhow!("failed to delete workflow {}: {e}", wf.id)
@@ -2141,68 +2153,54 @@ async fn handle_a_tag_deletion(
                                 .invalidate_channel_workflows(tenant.community(), channel_id);
                         }
                         tracing::info!(workflow_id = %wf.id, name = d_tag, "Workflow deleted via NIP-09 a-tag (name)");
+                        wf.id.to_string()
                     }
                     Ok(None) => {
                         tracing::warn!(
                             "NIP-09 a-tag deletion: no workflow '{d_tag}' found for owner"
                         );
+                        d_tag.to_string()
                     }
                     Err(e) => {
                         tracing::warn!("NIP-09 a-tag deletion: DB lookup failed: {e}");
+                        d_tag.to_string()
                     }
                 }
-            }
+            };
+
+            // Workflow listings are backed by kind:30620 definition events,
+            // not only the scheduler tables. Delete the addressable definition
+            // as part of the same NIP-09 side effect so it cannot reappear on
+            // the next list refresh. Legacy name-based tombstones are resolved
+            // to the workflow UUID above before deleting the event coordinate.
+            soft_delete_addressable_coordinate(
+                tenant,
+                state,
+                buzz_core::kind::KIND_WORKFLOW_DEF,
+                pubkey_hex,
+                &target_pubkey_bytes,
+                &definition_d_tag,
+                event.created_at.as_secs() as i64,
+            )
+            .await?;
         }
         // Generic NIP-33 (parameterized-replaceable) soft-delete by coordinate.
-        //
-        // Listed after the workflow branch so workflow's bespoke deletion
-        // (which doesn't soft-delete the `events` row by design — that's a
-        // separate concern) takes precedence. For every other addressable
-        // kind, including kind:30023 (NIP-23 long-form), we soft-delete the
-        // live row matching `(kind, pubkey, d_tag)` so REQs stop returning it.
+        // For every other addressable kind, including kind:30023 (NIP-23
+        // long-form), soft-delete the live row matching
+        // `(kind, pubkey, d_tag)` so REQs stop returning it.
         // See https://github.com/block/sprout/issues/714.
         k if is_parameterized_replaceable(k) => {
-            let pubkey_bytes = match hex::decode(pubkey_hex) {
-                Ok(b) => b,
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "invalid pubkey hex in a-tag {pubkey_hex}: {e}"
-                    ));
-                }
-            };
-            // Safe cast: NIP-33 kinds are 30000–39999, well within i32.
-            let kind_i32 = k as i32;
-            // NIP-09 scopes an a-tag deletion to versions at or before the
-            // deletion's own created_at, so a stale/replayed tombstone can never
-            // erase a newer replacement head.
-            let deleted = state
-                .db
-                .soft_delete_by_coordinate(
-                    tenant.community(),
-                    kind_i32,
-                    &pubkey_bytes,
-                    d_tag,
-                    event.created_at.as_secs() as i64,
-                )
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "failed to soft-delete by coordinate {kind_i32}:{pubkey_hex}:{d_tag}: {e}"
-                    )
-                })?;
-            if deleted {
-                tracing::info!(
-                    kind = k,
-                    d_tag = d_tag,
-                    "NIP-09 a-tag deletion: soft-deleted addressable event by coordinate"
-                );
-            } else {
-                tracing::debug!(
-                    kind = k,
-                    d_tag = d_tag,
-                    "NIP-09 a-tag deletion: no live row matched coordinate"
-                );
-            }
+            let pubkey_bytes = decode_a_tag_pubkey(pubkey_hex)?;
+            soft_delete_addressable_coordinate(
+                tenant,
+                state,
+                k,
+                pubkey_hex,
+                &pubkey_bytes,
+                d_tag,
+                event.created_at.as_secs() as i64,
+            )
+            .await?;
         }
         _ => {
             tracing::debug!(
@@ -2213,6 +2211,63 @@ async fn handle_a_tag_deletion(
         }
     }
 
+    Ok(())
+}
+
+fn decode_a_tag_pubkey(pubkey_hex: &str) -> anyhow::Result<Vec<u8>> {
+    let pubkey_bytes = hex::decode(pubkey_hex)
+        .map_err(|e| anyhow::anyhow!("invalid pubkey hex in a-tag {pubkey_hex}: {e}"))?;
+    if pubkey_bytes.len() != 32 {
+        return Err(anyhow::anyhow!(
+            "invalid pubkey length in a-tag {pubkey_hex}: expected 32 bytes, got {}",
+            pubkey_bytes.len()
+        ));
+    }
+    Ok(pubkey_bytes)
+}
+
+async fn soft_delete_addressable_coordinate(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    kind: u32,
+    pubkey_hex: &str,
+    pubkey_bytes: &[u8],
+    d_tag: &str,
+    deletion_created_at: i64,
+) -> anyhow::Result<()> {
+    // Safe cast: NIP-33 kinds are 30000–39999, well within i32.
+    let kind_i32 = kind as i32;
+    // NIP-09 scopes an a-tag deletion to versions at or before the
+    // deletion's own created_at, so a stale/replayed tombstone can never
+    // erase a newer replacement head.
+    let deleted = state
+        .db
+        .soft_delete_by_coordinate(
+            tenant.community(),
+            kind_i32,
+            pubkey_bytes,
+            d_tag,
+            deletion_created_at,
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to soft-delete by coordinate {kind_i32}:{pubkey_hex}:{d_tag}: {e}"
+            )
+        })?;
+    if deleted {
+        tracing::info!(
+            kind,
+            d_tag,
+            "NIP-09 a-tag deletion: soft-deleted addressable event by coordinate"
+        );
+    } else {
+        tracing::debug!(
+            kind,
+            d_tag,
+            "NIP-09 a-tag deletion: no live row matched coordinate"
+        );
+    }
     Ok(())
 }
 
@@ -3377,6 +3432,14 @@ fn topic_for_subscription(channel_id: Option<Uuid>) -> EventTopic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tag_pubkey_requires_a_full_nostr_public_key() {
+        let valid = "11".repeat(32);
+        assert_eq!(decode_a_tag_pubkey(&valid).expect("valid pubkey").len(), 32);
+        assert!(decode_a_tag_pubkey("11").is_err());
+        assert!(decode_a_tag_pubkey("not-hex").is_err());
+    }
 
     #[test]
     fn group_members_snapshot_keeps_members_past_one_thousand() {

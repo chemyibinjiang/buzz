@@ -1,7 +1,6 @@
 import type { Workflow } from "@/shared/api/types";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -12,13 +11,15 @@ import {
 import { Button } from "@/shared/ui/button";
 
 type WorkflowDeleteDialogProps = {
+  isDeleting: boolean;
   open: boolean;
   workflow: Workflow | null;
-  onConfirm: (workflow: Workflow) => void;
+  onConfirm: (workflow: Workflow) => Promise<void>;
   onOpenChange: (open: boolean) => void;
 };
 
 export function WorkflowDeleteDialog({
+  isDeleting,
   open,
   workflow,
   onConfirm,
@@ -36,24 +37,25 @@ export function WorkflowDeleteDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel asChild>
-            <Button type="button" variant="outline">
+          <AlertDialogCancel asChild disabled={isDeleting}>
+            <Button disabled={isDeleting} type="button" variant="outline">
               Cancel
             </Button>
           </AlertDialogCancel>
-          <AlertDialogAction asChild>
-            <Button
-              onClick={() => {
+          <Button
+            disabled={isDeleting}
+            onClick={() => {
+              if (!isDeleting) {
                 if (workflow) {
-                  onConfirm(workflow);
+                  void onConfirm(workflow);
                 }
-              }}
-              type="button"
-              variant="destructive"
-            >
-              Delete
-            </Button>
-          </AlertDialogAction>
+              }
+            }}
+            type="button"
+            variant="destructive"
+          >
+            {isDeleting ? "Deleting…" : "Delete"}
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

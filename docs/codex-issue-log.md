@@ -397,3 +397,11 @@
 - 处理：scheduled turn 现在完全忽略隐藏事件的 thread 结构，不生成 reply anchor，并明确要求协调、委派、附件等所有 CLI send 均不得使用 `--reply-to`。提示会把经过验证的 `created_by` pubkey 提供给 A，要求面向创建者的委派使用显式 `--mention`。当 B 收到“Agent 发送者 + 人类 p-tag”的委派时，prompt 明确要求顶层 Channel/DM 交付；task-bound harness 同样强制最终答案无 `e` thread 标签，并自动保留人类接收者的 p-tag，因此不依赖模型自行选择正确回复位置。
 - 验证：新增聚焦回归覆盖带隐藏 `e/reply` 标签的 scheduled event 不生成 `--reply-to`、scheduled prompt 包含创建者明确 mention 指令、Agent→Agent→human 委派生成顶层交付提示，以及 task-bound harness 的最终事件无 `e` 标签并保留人类 `p` 标签。新增 3 项聚焦测试、scheduled 相关 8 项和 reply-anchor 相关 7 项均通过；`cargo check -p buzz-acp`、`cargo clippy -p buzz-acp --lib --no-deps -- -D warnings`、Rustfmt 与 `git diff --check` 通过。
 - 版本/提交：`Lin/develop` 当前工作区，基线 `5bbbb50b`，待提交。
+
+## 2026-10-15：Workflow 点击 Delete 后仍留在列表
+
+- 现象：Workflow / Heartbeat 列表中点击 Delete 并确认后，项目仍然存在，用户无法判断删除请求是否失败。
+- 诊断：Relay 的 Workflow 专用 NIP-09 `a` tag 分支只删除了调度数据库中的 Workflow 及 run/approval，没有软删除列表查询依赖的 addressable `kind:30620` 定义事件，因此刷新后旧定义会再次出现。Desktop 还始终用当前人类身份的 pubkey 构造删除坐标，对由其所有 Agent 签名创建的 Workflow 会指向错误 owner；前端又在请求完成前关闭对话框且不显示错误。
+- 处理：Relay 现在使用 `a` tag 中的真实目标 pubkey 删除调度记录，并同时按 `(kind, pubkey, d-tag)` 软删除 `kind:30620` 定义；旧的名称型坐标会先解析为实际 Workflow UUID。Desktop 删除前先查询现有定义事件，使用它的真实签名者构造 NIP-09 坐标，仍由 Relay 验证人类 owner 删除 Agent 事件的授权。UI 等待请求成功后才关闭对话框，显示 `Deleting…`，失败时保留项目并显示错误 toast，成功时立即从当前缓存列表移除后再刷新 Relay 数据。
+- 验证：`cargo check -p buzz-relay`、Desktop TypeScript typecheck、Tauri 聚焦单测和 E2E build 通过；Workflow Playwright 10/10 通过，覆盖删除成功后列表消失，以及 Relay 删除拒绝时对话框/项目保留并显示错误。真实环境要生效必须同步部署本次 Relay 修改。
+- 版本/提交：`Lin/develop` 当前工作区，基线 `8c0971e7`，待提交。

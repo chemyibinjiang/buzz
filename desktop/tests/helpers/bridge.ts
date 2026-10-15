@@ -193,6 +193,8 @@ type MockBridgeOptions = {
   acpAuthMethodsError?: string;
   /** When set, the `delete_custom_harness` mock command throws with this message. */
   deleteCustomHarnessError?: string;
+  /** When set, the `delete_workflow` mock command throws with this message. */
+  deleteWorkflowError?: string;
   connectAcpRuntimeResult?: { launched: boolean };
   connectAcpRuntimeDelayMs?: number;
   connectAcpRuntimeError?: string;

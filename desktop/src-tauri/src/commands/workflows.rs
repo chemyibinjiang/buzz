@@ -280,7 +280,24 @@ pub async fn delete_workflow(
     workflow_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let builder = events::build_workflow_delete(&workflow_id, &current_pubkey_hex(&state)?)?;
+    // The workflow definition may be signed by one of the current user's
+    // managed agents. NIP-09 coordinates must name the actual definition
+    // author; the relay separately authorizes the owning human to delete it.
+    let prior = query_relay(
+        &state,
+        &[serde_json::json!({
+            "kinds": [30620],
+            "#d": [workflow_id.clone()],
+            "limit": 1
+        })],
+    )
+    .await?;
+    let prior_event = prior
+        .first()
+        .ok_or_else(|| "workflow not found".to_string())?;
+    let definition_owner = workflow_definition_owner(prior_event);
+
+    let builder = events::build_workflow_delete(&workflow_id, &definition_owner)?;
     submit_event(builder, &state).await?;
     Ok(())
 }
@@ -337,6 +354,10 @@ pub async fn deny_approval(
 }
 
 // ── Helpers (pure, unit-tested in workflows_tests.rs) ─────────────────────────
+
+fn workflow_definition_owner(event: &nostr::Event) -> String {
+    event.pubkey.to_hex()
+}
 
 fn trigger_wire_from_message(
     workflow_id: String,

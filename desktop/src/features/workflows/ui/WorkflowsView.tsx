@@ -1,6 +1,7 @@
 import { Plus, RefreshCw, Zap } from "lucide-react";
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 import {
   allWorkflowsQueryKey,
@@ -154,6 +155,11 @@ export function WorkflowsView({
       if (selectedWorkflowId === workflowId) {
         onCloseWorkflow();
       }
+      queryClient.setQueryData<WorkflowWithChannel[]>(
+        allWorkflowsQueryKey(channelIdKey),
+        (current) =>
+          current?.filter(({ workflow }) => workflow.id !== workflowId),
+      );
       void queryClient.invalidateQueries({
         predicate: (query) =>
           query.queryKey[0] === "workflows" ||
@@ -173,11 +179,19 @@ export function WorkflowsView({
     [],
   );
 
-  const deleteOne = deleteMutation.mutate;
+  const deleteOne = deleteMutation.mutateAsync;
   const handleConfirmDelete = React.useCallback(
-    (workflow: Workflow) => {
-      deleteOne(workflow.id);
-      setDeleteTarget(null);
+    async (workflow: Workflow) => {
+      try {
+        await deleteOne(workflow.id);
+        setDeleteTarget(null);
+        toast.success("Workflow deleted");
+      } catch (error) {
+        toast.error("Couldn't delete workflow", {
+          description:
+            error instanceof Error ? error.message : "Unknown deletion error",
+        });
+      }
     },
     [deleteOne],
   );
@@ -313,9 +327,10 @@ export function WorkflowsView({
       />
 
       <WorkflowDeleteDialog
+        isDeleting={deleteMutation.isPending}
         onConfirm={handleConfirmDelete}
         onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null);
+          if (!open && !deleteMutation.isPending) setDeleteTarget(null);
         }}
         open={deleteTarget !== null}
         workflow={deleteTarget}

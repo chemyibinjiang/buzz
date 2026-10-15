@@ -344,6 +344,8 @@ type E2eConfig = {
     closeChannelLiveSubscriptionOnce?: boolean;
     /** Reject successive kind-9 sends with these messages, then resume. */
     sendMessageErrors?: string[];
+    /** Reject Workflow deletion so the confirmation error state can be tested. */
+    deleteWorkflowError?: string;
     /** Reject successive managed-agent starts, then resume. */
     startManagedAgentErrors?: string[];
     /** Delay (ms) after snapshotting a thread-replies page so E2E tests can
@@ -13145,6 +13147,9 @@ export function maybeInstallE2eTauriMocks() {
           payload as Parameters<typeof handleUpdateWorkflow>[0],
         );
       case "delete_workflow":
+        if (activeConfig?.mock?.deleteWorkflowError) {
+          throw new Error(activeConfig.mock.deleteWorkflowError);
+        }
         return handleDeleteWorkflow(
           payload as Parameters<typeof handleDeleteWorkflow>[0],
         );
