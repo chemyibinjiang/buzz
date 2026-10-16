@@ -567,6 +567,8 @@ export function MessageThreadPanel({
     >
       <div
         className={cn(hasConstrainedColumn && THREAD_PANEL_COLUMN_CLASS)}
+        data-reading-layout={isFocusMode ? "comfortable" : "compact"}
+        data-testid="thread-reading-column"
         ref={threadContentRef}
         style={
           hasConstrainedColumn ? { maxWidth: columnMaxWidthPx } : undefined
@@ -578,7 +580,10 @@ export function MessageThreadPanel({
           </div>
         ) : (
           <div
-            className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-1 pt-0")}
+            className={cn(
+              THREAD_PANEL_MESSAGE_GUTTER_CLASS,
+              isFocusMode ? "pb-5 pt-4" : "pb-1 pt-0",
+            )}
             data-testid="message-thread-head"
           >
             <div className="rounded-2xl">
@@ -588,9 +593,10 @@ export function MessageThreadPanel({
                 currentPubkey={currentPubkey}
                 huddleMemberPubkeys={huddleMemberPubkeys}
                 huddleMemberPubkeysPending={huddleMemberPubkeysPending}
+                hoverBackground={!isFocusMode}
                 isFollowingThread={isFollowingThread}
                 isUnread={isMessageUnreadById?.(threadHead.id)}
-                layoutVariant="thread-reply"
+                layoutVariant={isFocusMode ? "thread-focus" : "thread-reply"}
                 message={threadHead}
                 onDelete={
                   onDelete &&
@@ -644,7 +650,10 @@ export function MessageThreadPanel({
         ) : null}
 
         <div
-          className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-3 pt-0")}
+          className={cn(
+            THREAD_PANEL_MESSAGE_GUTTER_CLASS,
+            isFocusMode ? "pb-8 pt-1" : "pb-3 pt-0",
+          )}
           data-testid="message-thread-replies"
         >
           {threadRepliesPending && !isHuddleTranscript ? (
@@ -658,7 +667,7 @@ export function MessageThreadPanel({
           ) : repliesRenderState === "list" ? (
             visibleThreadHeadSummary ? (
               <div
-                className="space-y-0"
+                className={cn(isFocusMode ? "space-y-1" : "space-y-0")}
                 data-render-pending={isRepliesPending ? "true" : undefined}
               >
                 <MessageThreadSummaryRow
@@ -674,7 +683,7 @@ export function MessageThreadPanel({
               </div>
             ) : (
               <div
-                className="space-y-0"
+                className={cn(isFocusMode ? "space-y-1" : "space-y-0")}
                 data-render-pending={isRepliesPending ? "true" : undefined}
               >
                 {threadReplyRenderItems.map((item) => {
@@ -739,12 +748,14 @@ export function MessageThreadPanel({
                           isDirectChildOfHighlightedBranch
                         }
                         highlightThreadLineDepths={highlightedLineDepths}
-                        hoverBackground={!entry.summary}
+                        hoverBackground={!isFocusMode && !entry.summary}
                         huddleMemberPubkeys={huddleMemberPubkeys}
                         huddleMemberPubkeysPending={huddleMemberPubkeysPending}
                         isContinuation={isContinuation}
                         isUnread={isMessageUnreadById?.(entry.message.id)}
-                        layoutVariant="thread-reply"
+                        layoutVariant={
+                          isFocusMode ? "thread-focus" : "thread-reply"
+                        }
                         message={entry.message}
                         onCollapseDepthGuide={handleCollapseDepthGuide}
                         onCollapseDepthGuideHoverChange={

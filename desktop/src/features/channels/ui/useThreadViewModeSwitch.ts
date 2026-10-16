@@ -17,6 +17,22 @@ export function findTopVisibleThreadMessageId(
   return visibleReply?.dataset.messageId ?? null;
 }
 
+export function isThreadMessageVisible(
+  body: HTMLElement | null,
+  messageId: string | null,
+): boolean {
+  if (!body || !messageId) return false;
+
+  const row = Array.from(
+    body.querySelectorAll<HTMLElement>("[data-message-id]"),
+  ).find((candidate) => candidate.dataset.messageId === messageId);
+  if (!row) return false;
+
+  const bodyBounds = body.getBoundingClientRect();
+  const rowBounds = row.getBoundingClientRect();
+  return rowBounds.bottom > bodyBounds.top && rowBounds.top < bodyBounds.bottom;
+}
+
 export function getResolvedThreadTargets({
   externalTargetId,
   layoutTargetId,
@@ -64,6 +80,7 @@ export function useThreadViewModeSwitch({
 }: ThreadViewModeSwitchOptions) {
   const [layoutScrollTarget, setLayoutScrollTarget] =
     React.useState<LayoutScrollTarget | null>(null);
+  const lastLayoutAnchorRef = React.useRef<LayoutScrollTarget | null>(null);
   const layoutScrollTargetId = getScopedLayoutScrollTargetId({
     activeThreadHeadId,
     layoutTarget: layoutScrollTarget,
@@ -73,6 +90,9 @@ export function useThreadViewModeSwitch({
     setLayoutScrollTarget((current) =>
       current?.threadHeadId === activeThreadHeadId ? current : null,
     );
+    if (lastLayoutAnchorRef.current?.threadHeadId !== activeThreadHeadId) {
+      lastLayoutAnchorRef.current = null;
+    }
   }, [activeThreadHeadId]);
 
   const changeThreadViewMode = React.useCallback(
@@ -80,13 +100,19 @@ export function useThreadViewModeSwitch({
       const body = document.querySelector<HTMLElement>(
         '[data-testid="message-thread-body"]',
       );
-      const anchorId = findTopVisibleThreadMessageId(body);
+      const previousAnchor = lastLayoutAnchorRef.current;
+      const anchorId =
+        previousAnchor?.threadHeadId === activeThreadHeadId &&
+        isThreadMessageVisible(body, previousAnchor.messageId)
+          ? previousAnchor.messageId
+          : findTopVisibleThreadMessageId(body);
 
-      setLayoutScrollTarget(
+      lastLayoutAnchorRef.current =
         anchorId && activeThreadHeadId
           ? { messageId: anchorId, threadHeadId: activeThreadHeadId }
-          : null,
-      );
+          : null;
+
+      setLayoutScrollTarget(lastLayoutAnchorRef.current);
       onModeChange?.(mode);
       setThreadViewMode(mode);
       requestAnimationFrame(() => {

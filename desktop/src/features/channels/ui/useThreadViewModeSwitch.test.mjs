@@ -5,6 +5,7 @@ import {
   findTopVisibleThreadMessageId,
   getResolvedThreadTargets,
   getScopedLayoutScrollTargetId,
+  isThreadMessageVisible,
 } from "./useThreadViewModeSwitch.ts";
 
 function row(id, top, bottom) {
@@ -26,6 +27,19 @@ test("finds the first thread message crossing the viewport top", () => {
   };
 
   assert.equal(findTopVisibleThreadMessageId(body), "crossing");
+});
+
+test("recognizes a prior reading anchor while it remains in the viewport", () => {
+  const rows = [row("above", -80, -5), row("anchor", 30, 90)];
+  const body = {
+    getBoundingClientRect: () => ({ bottom: 120, top: 0 }),
+    querySelectorAll: () => rows,
+  };
+
+  assert.equal(isThreadMessageVisible(body, "anchor"), true);
+  assert.equal(isThreadMessageVisible(body, "above"), false);
+  assert.equal(isThreadMessageVisible(body, "missing"), false);
+  assert.equal(isThreadMessageVisible(null, "anchor"), false);
 });
 
 test("resolves both sources when a layout anchor matches the external target", () => {

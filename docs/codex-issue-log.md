@@ -405,3 +405,11 @@
 - 处理：Relay 现在使用 `a` tag 中的真实目标 pubkey 删除调度记录，并同时按 `(kind, pubkey, d-tag)` 软删除 `kind:30620` 定义；旧的名称型坐标会先解析为实际 Workflow UUID。Desktop 删除前先查询现有定义事件，使用它的真实签名者构造 NIP-09 坐标，仍由 Relay 验证人类 owner 删除 Agent 事件的授权。UI 等待请求成功后才关闭对话框，显示 `Deleting…`，失败时保留项目并显示错误 toast，成功时立即从当前缓存列表移除后再刷新 Relay 数据。
 - 验证：`cargo check -p buzz-relay`、Desktop TypeScript typecheck、Tauri 聚焦单测和 E2E build 通过；Workflow Playwright 10/10 通过，覆盖删除成功后列表消失，以及 Relay 删除拒绝时对话框/项目保留并显示错误。真实环境要生效必须同步部署本次 Relay 修改。
 - 版本/提交：`Lin/develop` 当前工作区，基线 `8c0971e7`，待提交。
+
+## 2026-10-16：Focus Thread 长内容阅读疲劳
+
+- 现象：用户反馈 Thread 展开界面阅读长篇 Agent 回复时非常疲劳；截图显示正文密集、行距和段落间距偏小，鼠标经过长消息时整块灰色悬停背景进一步加重视觉负担，希望采用接近 Codex 的专注阅读版式。
+- 诊断：Focus Thread 虽然已经使用居中限宽列，但仍完全复用并排聊天的紧凑消息样式：正文为 `text-sm/leading-5`（14px/20px）、消息纵向内边距仅 4px、段落连续间距仅 6px，且普通消息启用整行 `bg-muted` 悬停背景。宽屏下阅读列上限 880px，使长行与低行距叠加。
+- 处理：仅在 Focus Thread 启用舒适阅读密度，阅读列收窄至 760px，Markdown 正文提升为 16px/28px，扩大段落、代码块、表格和引用块之间的留白，并增加消息纵向间距；Focus 模式关闭整块消息灰底悬停反馈，操作栏和所有消息、附件及线程功能继续保留。并排 Thread 维持原紧凑密度，避免占用频道空间。
+- 验证：Desktop TypeScript、目标文件 Biome 检查和 `check:px-text` 通过；E2E 构建通过；模式切换 helper 单测 6/6 通过；Focus Thread Playwright smoke 2/2 通过，覆盖舒适模式标记、760px 最大阅读宽度、16px/28px 正文、12px 消息纵向内边距，以及切回并排视图后恢复 compact。另用 1280×720 实际截图检查，正文列、段落留白和输入框对齐符合专注阅读预期，且长消息不再出现整块灰色悬停底色。
+- 版本/提交：`Lin/develop` 当前工作区，基线 `5a0db3bc`，待提交。

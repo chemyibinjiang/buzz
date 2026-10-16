@@ -129,7 +129,7 @@ export const MessageRow = React.memo(
     isFollowingThread?: boolean;
     isContinuation?: boolean;
     isUnread?: boolean;
-    layoutVariant?: "default" | "thread-reply";
+    layoutVariant?: "default" | "thread-reply" | "thread-focus";
     message: TimelineMessage;
     onCollapseDepthGuide?: (message: TimelineMessage) => void;
     onCollapseDepthGuideHoverChange?: (
@@ -295,6 +295,8 @@ export const MessageRow = React.memo(
       message.tags,
     );
     const bodyOffsetClass = emojiOnly ? "mt-1" : "-mt-0.5";
+    const isThreadReplyLayout = layoutVariant !== "default";
+    const isThreadFocusLayout = layoutVariant === "thread-focus";
 
     const { nonDmChannelNames: channelNames } = useChannelNavigation();
     const openVideoReviewAt = useOpenVideoReviewAt();
@@ -415,7 +417,9 @@ export const MessageRow = React.memo(
             <Markdown
               channelNames={channelNames}
               className={cn(
-                "max-w-full text-sm",
+                isThreadFocusLayout
+                  ? "max-w-full text-base! leading-7! [&>*+*]:mt-4! [&>p+p]:mt-3! [&>*+blockquote]:mt-5! [&>blockquote+*]:mt-5! [&>*+[data-code-block]]:mt-5! [&>[data-code-block]+*]:mt-5! [&>*+[data-table-block]]:mt-5! [&>[data-table-block]+*]:mt-5!"
+                  : "max-w-full text-sm",
                 emojiOnly &&
                   "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
               )}
@@ -463,7 +467,6 @@ export const MessageRow = React.memo(
       }
     };
 
-    const isThreadReplyLayout = layoutVariant === "thread-reply";
     const guideBleedRem = isThreadReplyLayout ? 0.25 : 0;
     const avatarButtonRadiusClass = "rounded-full";
 
@@ -881,13 +884,15 @@ export const MessageRow = React.memo(
           className={cn(
             "group/message relative z-10 rounded-2xl transition-colors",
             playEntrance && "motion-enter-conversation",
-            "py-1",
+            isThreadFocusLayout ? "py-3" : "py-1",
             hoverBackground
               ? "mx-1 px-2 hover:bg-muted/50 focus-within:bg-muted/50"
-              : isThreadReplyLayout
-                ? "mx-1 px-2"
-                : "px-2",
-            "flex gap-2.5",
+              : isThreadFocusLayout
+                ? "mx-0 px-2 sm:px-3"
+                : isThreadReplyLayout
+                  ? "mx-1 px-2"
+                  : "px-2",
+            isThreadFocusLayout ? "flex gap-3.5" : "flex gap-2.5",
             isDisplayedAsContinuation ? "items-center" : "items-start",
             hasActiveReminder ? "bg-blue-500/10" : "",
             highlighted
@@ -901,7 +906,12 @@ export const MessageRow = React.memo(
           {isThreadReplyLayout ? (
             <>
               {avatarGutterNode}
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div
+                className={cn(
+                  "flex min-w-0 flex-1 flex-col",
+                  isThreadFocusLayout ? "gap-1.5" : "gap-0.5",
+                )}
+              >
                 {headerNode}
                 <div className={bodyContainerClass}>{messageBodyNode}</div>
               </div>

@@ -188,6 +188,33 @@ test("focus and split preserve reading context and interaction ownership", async
   const drawer = page.getByTestId("focus-thread-drawer");
   const body = page.getByTestId("message-thread-body");
   await expect(drawer).toBeVisible();
+  const readingColumn = page.getByTestId("thread-reading-column");
+  await expect(readingColumn).toHaveAttribute(
+    "data-reading-layout",
+    "comfortable",
+  );
+  await expect
+    .poll(async () => {
+      const box = await readingColumn.boundingBox();
+      return box?.width ?? Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThanOrEqual(760);
+  const focusMarkdown = readingColumn.locator(".message-markdown").first();
+  await expect(focusMarkdown).toBeVisible();
+  await expect
+    .poll(() =>
+      focusMarkdown.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return `${style.fontSize}/${style.lineHeight}`;
+      }),
+    )
+    .toBe("16px/28px");
+  const focusRow = readingColumn.getByTestId("message-row").first();
+  await expect
+    .poll(() =>
+      focusRow.evaluate((element) => getComputedStyle(element).paddingTop),
+    )
+    .toBe("12px");
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -212,6 +239,10 @@ test("focus and split preserve reading context and interaction ownership", async
   ).toBeVisible();
   await focusModeToggle.click();
   await expect(drawer).toHaveCount(0);
+  await expect(page.getByTestId("thread-reading-column")).toHaveAttribute(
+    "data-reading-layout",
+    "compact",
+  );
   await expect(channel).not.toHaveAttribute("inert", "");
   await expectChannelHeaderUnobscured(page);
   await expect(page.getByRole("tooltip")).toHaveCount(0);
