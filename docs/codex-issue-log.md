@@ -429,3 +429,19 @@
 - 处理：Relay 的 Workflow 删除改为幂等清理。owner-scoped DELETE 返回 NotFound 时，再按当前 Community 和 Workflow UUID 做一次权威查询：确认数据库行确实已经不存在后，继续软删除 `kind:30620` 定义；如果行仍存在，说明是 owner 坐标不匹配，继续拒绝删除，避免越权清理其他 owner 的定义。正常删除及缓存失效路径保持不变。
 - 验证：`cargo check -p buzz-relay` 通过；Relay `handlers::side_effects::tests` 聚焦单测 7/7 通过，`git diff --check` 通过。删除前的 NIP-09 授权仍要求操作者是定义作者或该 Agent 的 owner；数据库行仍存在但坐标 owner 不匹配时明确失败，只有权威查询确认行已不存在时才继续清理定义。仍需真实 Relay 部署后验证历史遗留定义消失；只有 Desktop 安装包无法清理服务端数据。
 - 版本/提交：`Lin/develop` 当前工作区，基线 `3174bc6c`，待提交。
+
+## 2026-10-16：Agent 能正常回复，但 Activity 面板始终为空
+
+- 现象：`test talk 2` 在 `#general` 能正常收到消息并回复，但右侧 Activity 面板持续显示 `No ACP activity yet`，无法查看该 Agent 的思考和工具活动。
+- 诊断：客户端本地 Activity archive 中，该 Agent 的 kind `24200` observer 事件数量为 0；Relay 数据库中该 Agent `2aef5243…` 已是 Relay member，但 `users.agent_owner_pubkey` 仍为 NULL。Relay 日志在每次正常 kind:9 回复后都出现同一 Agent 的 `/events` 403，说明 observer frame 被拒绝。根因是 closed Relay 的成员检查先发现 Agent 已是直接成员，立即返回 `MembershipDecision::Member`，没有继续解析有效的 NIP-OA auth tag；认证处理只对 `ViaOwner` 或 open Relay 路径执行 `materialize_nip_oa_owner`，因此这种“已是成员但缺少 owner 映射”的历史 Agent 永远无法自动回填。普通聊天事件不要求该映射，所以聊天正常；kind `24200` 要求已注册 Agent，因此 Activity 被拒绝。
+- 处理：本轮仅完成证据化诊断，未修改产品代码。后续修复应让携带有效 NIP-OA tag 的直接成员也尝试幂等回填 Agent→Owner 映射，并让 ACP 在 observer frame 收到 `accepted=false` 时记录明确告警、避免静默按成功确认。
+- 验证：Agent 本机日志确认四次回复均发布到 channel `fed94bb4-5142-5ca4-aa62-91ddf2a895bb`；本地 archive 查询确认该 Agent/channel 均无 observer 事件；Relay journal 在 `13:32:51`、`13:37:50`、`13:42:51`、`13:47:54` UTC 均记录该 Agent 的普通 kind:9 事件 accepted=true，随后 Activity `/events` 请求 status=403/accepted=false；Relay DB 确认 `agent_owner_pubkey IS NULL`。
+- 版本/提交：`Lin/develop`，基线 `289158e1`；诊断记录，尚未修复或提交。
+
+## 2026-10-16：Focus Thread 科研长文与表格排版不如 ChatGPT 清晰
+
+- 现象：用户对比 ChatGPT App 与 Buzz 的同类科研回答后，认为 Buzz 阅读疲劳。Buzz 截图显示 1040px 阅读列在宽屏抽屉中占比过小；Markdown 表格使用圆角边框、灰色表头和 14px 紧凑字号，表格按内容宽度横向撑开，四列证据矩阵只能看到前两列并出现横向滚动。
+- 诊断：Focus Thread 虽已把正文提升为 16px/28px，但共享 `MarkdownTable` 又固定使用 `text-sm`，抵消了舒适阅读字号；`w-max` 与内容固有宽度使多列表格优先横向扩张而不是换行。1040px 默认列更适合普通长文，不适合宽屏上的四列科研证据表。
+- 处理：Focus Thread 默认阅读宽度提升到 1520px、可调上限提升到 1800px，原有收窄/复位/加宽和拖拽持久化继续保留。专注模式 Markdown 增加文档型层级与段落节奏；表格改为 16px/28px、固定列布局和安全换行，四列表按 23%/31%/23%/23% 分配列宽，移除圆角外框与灰色表头，仅保留清晰表头线和轻量行分隔。普通频道、Inbox 和并排 Thread 的紧凑表格不受影响。
+- 验证：Desktop TypeScript、Biome 和 `check:px-text` 通过；E2E build 通过；Focus Thread Playwright 2/2 通过，覆盖 16px/28px 正文和表格、无表格外框、透明表头、固定列布局、无横向溢出，以及阅读宽度按钮/拖拽/持久化和 Focus/Split 切换。实际 1280×720 mock 截图确认四列同时可见并自动换行。
+- 版本/提交：`Lin/develop` 当前工作区，基线 `289158e1`，待提交。

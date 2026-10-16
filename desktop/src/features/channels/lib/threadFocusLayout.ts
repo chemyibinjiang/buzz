@@ -24,7 +24,7 @@ export const THREAD_FOCUS_SLIVER_WIDTH_PX = 72;
  * text-only reading measure. Users can resize this value in the thread header;
  * the list and composer share the selected width.
  */
-export const THREAD_FOCUS_COLUMN_MAX_WIDTH_PX = 1040;
+export const THREAD_FOCUS_COLUMN_MAX_WIDTH_PX = 1520;
 
 /**
  * Horizontal distance the focus drawer travels on enter/exit.

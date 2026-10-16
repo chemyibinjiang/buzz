@@ -255,7 +255,7 @@ export function MessageThreadPanel({
   const isOverlay = useIsThreadPanelOverlay();
   const threadHeadId = threadHead?.id ?? null;
   const readingWidth = useResizableThreadReadingWidth(
-    configuredColumnMaxWidthPx ?? 1040,
+    configuredColumnMaxWidthPx ?? 1520,
   );
   const columnMaxWidthPx = isFocusMode
     ? readingWidth.readingWidthPx

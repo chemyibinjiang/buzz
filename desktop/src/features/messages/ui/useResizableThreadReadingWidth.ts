@@ -1,7 +1,7 @@
 import * as React from "react";
 
 export const THREAD_READING_MIN_WIDTH_PX = 640;
-export const THREAD_READING_MAX_WIDTH_PX = 1400;
+export const THREAD_READING_MAX_WIDTH_PX = 1800;
 export const THREAD_READING_WIDTH_STEP_PX = 120;
 
 const THREAD_READING_WIDTH_STORAGE_KEY =

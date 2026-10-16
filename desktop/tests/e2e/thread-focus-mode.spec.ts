@@ -13,7 +13,16 @@ async function seedLongThread(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
     const root = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
       channelName: "general",
-      content: "Focus mode integration thread",
+      content: [
+        "## Evidence summary",
+        "",
+        "The expanded evidence keeps the reasoning chain visible instead of compressing every result into one paragraph.",
+        "",
+        "| Literature / comparison | Method and observed data | What it supports | What it cannot prove |",
+        "| --- | --- | --- | --- |",
+        "| **Yang, 2012** | TEM + UV-Vis across three addition times | **An early-time window matters** | The active silver species was not measured directly |",
+        "| **Tong, 2017** | Distribution fits at 10 and 20 minutes | Timing changes the width population | Fitted groups are not single-particle trajectories |",
+      ].join("\n"),
       createdAt: 1_700_900_000,
     });
     if (!root) throw new Error("Failed to seed focus thread root");
@@ -209,19 +218,19 @@ test("focus and split preserve reading context and interaction ownership", async
       const box = await readingColumn.boundingBox();
       return box?.width ?? Number.POSITIVE_INFINITY;
     })
-    .toBeLessThanOrEqual(1040);
-  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1040");
+    .toBeLessThanOrEqual(1520);
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1520");
   await page.getByTestId("thread-reading-narrower").click();
-  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "920");
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1400");
   await expect
     .poll(() =>
       page.evaluate(() =>
         localStorage.getItem("buzz.desktop.focus-thread-reading-width"),
       ),
     )
-    .toBe("920");
+    .toBe("1400");
   await page.getByTestId("thread-reading-reset").click();
-  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1040");
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1520");
   const resizeHandle = page.getByTestId("thread-reading-resize-handle");
   await expect(resizeHandle).toBeVisible();
   const resizeHandleBox = await resizeHandle.boundingBox();
@@ -242,9 +251,9 @@ test("focus and split preserve reading context and interaction ownership", async
     resizeY,
   );
   await page.mouse.up();
-  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "920");
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1400");
   await resizeHandle.dblclick();
-  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1040");
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1520");
   const focusMarkdown = readingColumn.locator(".message-markdown").first();
   await expect(focusMarkdown).toBeVisible();
   await expect
@@ -255,6 +264,42 @@ test("focus and split preserve reading context and interaction ownership", async
       }),
     )
     .toBe("16px/28px");
+  const focusTableBlock = focusMarkdown.locator("[data-table-block]");
+  await expect(focusTableBlock).toBeVisible();
+  await expect
+    .poll(() =>
+      focusTableBlock.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return `${style.borderTopWidth}/${style.borderRadius}`;
+      }),
+    )
+    .toBe("0px/0px");
+  await expect
+    .poll(() =>
+      focusTableBlock.locator("table").evaluate((element) => {
+        const style = getComputedStyle(element);
+        return `${style.fontSize}/${style.lineHeight}/${style.tableLayout}`;
+      }),
+    )
+    .toBe("16px/28px/fixed");
+  await expect
+    .poll(() =>
+      focusTableBlock.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  await expect
+    .poll(() =>
+      focusTableBlock
+        .locator("th")
+        .first()
+        .evaluate((element) => {
+          const style = getComputedStyle(element);
+          return `${style.backgroundColor}/${style.paddingBottom}`;
+        }),
+    )
+    .toBe("rgba(0, 0, 0, 0)/12px");
   const focusRow = readingColumn.getByTestId("message-row").first();
   await expect
     .poll(() =>
