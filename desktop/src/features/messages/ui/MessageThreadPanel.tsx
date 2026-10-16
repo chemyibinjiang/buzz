@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Minus, Plus, RotateCcw } from "lucide-react";
 
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { HuddleTranscriptIntro } from "@/features/huddle/components/HuddleTranscriptIntro";
@@ -30,6 +30,7 @@ import { AuxiliaryPanel } from "@/shared/layout/AuxiliaryPanel";
 import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
 import {
   AuxiliaryPanelHeader,
+  AuxiliaryPanelHeaderActions,
   AuxiliaryPanelHeaderGroup,
   AuxiliaryPanelTitle,
 } from "@/shared/layout/AuxiliaryPanel";
@@ -52,6 +53,7 @@ import { useComposerHeightPadding } from "./useComposerHeightPadding";
 import { useStableSendToChannel } from "./useStableSendToChannel";
 import { useAnchoredScroll } from "./useAnchoredScroll";
 import { selectDeferredListRenderState } from "@/features/messages/lib/timelineSnapshot";
+import { useResizableThreadReadingWidth } from "./useResizableThreadReadingWidth";
 
 type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   channel: Channel | null;
@@ -190,7 +192,7 @@ export function MessageThreadPanel({
   channel,
   channelId,
   channelName,
-  columnMaxWidthPx,
+  columnMaxWidthPx: configuredColumnMaxWidthPx,
   currentPubkey,
   disabled = false,
   firstUnreadReplyId,
@@ -252,6 +254,12 @@ export function MessageThreadPanel({
   >(null);
   const isOverlay = useIsThreadPanelOverlay();
   const threadHeadId = threadHead?.id ?? null;
+  const readingWidth = useResizableThreadReadingWidth(
+    configuredColumnMaxWidthPx ?? 1040,
+  );
+  const columnMaxWidthPx = isFocusMode
+    ? readingWidth.readingWidthPx
+    : configuredColumnMaxWidthPx;
   useEscapeKey(
     onClose,
     !isHuddleTranscript && (isOverlay || isSinglePanelView || isFocusMode),
@@ -566,14 +574,31 @@ export function MessageThreadPanel({
       ref={threadBodyRef}
     >
       <div
-        className={cn(hasConstrainedColumn && THREAD_PANEL_COLUMN_CLASS)}
+        className={cn(
+          hasConstrainedColumn && THREAD_PANEL_COLUMN_CLASS,
+          isFocusMode && "relative",
+        )}
         data-reading-layout={isFocusMode ? "comfortable" : "compact"}
+        data-reading-width-px={isFocusMode ? columnMaxWidthPx : undefined}
         data-testid="thread-reading-column"
         ref={threadContentRef}
         style={
           hasConstrainedColumn ? { maxWidth: columnMaxWidthPx } : undefined
         }
       >
+        {isFocusMode ? (
+          <button
+            aria-label="Resize thread reading width"
+            className="group/thread-reading-resize absolute inset-y-0 right-0 z-20 w-3 cursor-col-resize"
+            data-testid="thread-reading-resize-handle"
+            onDoubleClick={readingWidth.resetReadingWidth}
+            onPointerDown={readingWidth.handleReadingWidthResizeStart}
+            title="Drag to resize. Double-click to reset reading width."
+            type="button"
+          >
+            <span className="absolute inset-y-6 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover/thread-reading-resize:bg-border/80 group-focus-visible/thread-reading-resize:bg-border/80" />
+          </button>
+        ) : null}
         {isHuddleTranscript ? (
           <div className={cn(THREAD_PANEL_MESSAGE_GUTTER_CLASS, "pb-2 pt-4")}>
             <HuddleTranscriptIntro />
@@ -976,6 +1001,52 @@ export function MessageThreadPanel({
       >
         <AuxiliaryPanelTitle>Thread</AuxiliaryPanelTitle>
       </AuxiliaryPanelHeaderGroup>
+      {isFocusMode ? (
+        <AuxiliaryPanelHeaderActions>
+          <fieldset className="flex items-center rounded-lg border border-border/50 bg-background/70 p-0.5">
+            <legend className="sr-only">Reading width</legend>
+            <Button
+              aria-label="Narrow reading column"
+              className="size-7"
+              data-testid="thread-reading-narrower"
+              disabled={!readingWidth.canNarrowReadingWidth}
+              onClick={readingWidth.narrowReadingWidth}
+              size="icon"
+              title="Narrow reading column"
+              type="button"
+              variant="ghost"
+            >
+              <Minus />
+            </Button>
+            <Button
+              aria-label="Reset reading width"
+              className="size-7"
+              data-testid="thread-reading-reset"
+              disabled={!readingWidth.canResetReadingWidth}
+              onClick={readingWidth.resetReadingWidth}
+              size="icon"
+              title="Reset reading width"
+              type="button"
+              variant="ghost"
+            >
+              <RotateCcw />
+            </Button>
+            <Button
+              aria-label="Widen reading column"
+              className="size-7"
+              data-testid="thread-reading-wider"
+              disabled={!readingWidth.canWidenReadingWidth}
+              onClick={readingWidth.widenReadingWidth}
+              size="icon"
+              title="Widen reading column"
+              type="button"
+              variant="ghost"
+            >
+              <Plus />
+            </Button>
+          </fieldset>
+        </AuxiliaryPanelHeaderActions>
+      ) : null}
     </>
   );
 

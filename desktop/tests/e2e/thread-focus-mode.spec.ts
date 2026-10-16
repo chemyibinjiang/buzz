@@ -194,11 +194,57 @@ test("focus and split preserve reading context and interaction ownership", async
     "comfortable",
   );
   await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          document
+            .querySelector('[data-testid="focus-thread-drawer"]')
+            ?.contains(document.activeElement),
+        ),
+      ),
+    )
+    .toBe(true);
+  await expect
     .poll(async () => {
       const box = await readingColumn.boundingBox();
       return box?.width ?? Number.POSITIVE_INFINITY;
     })
-    .toBeLessThanOrEqual(760);
+    .toBeLessThanOrEqual(1040);
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1040");
+  await page.getByTestId("thread-reading-narrower").click();
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "920");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("buzz.desktop.focus-thread-reading-width"),
+      ),
+    )
+    .toBe("920");
+  await page.getByTestId("thread-reading-reset").click();
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1040");
+  const resizeHandle = page.getByTestId("thread-reading-resize-handle");
+  await expect(resizeHandle).toBeVisible();
+  const resizeHandleBox = await resizeHandle.boundingBox();
+  if (!resizeHandleBox) {
+    throw new Error("Thread reading resize handle has no bounding box");
+  }
+  const resizeY = Math.min(
+    620,
+    Math.max(
+      100,
+      resizeHandleBox.y + Math.min(100, resizeHandleBox.height / 2),
+    ),
+  );
+  await page.mouse.move(resizeHandleBox.x + resizeHandleBox.width / 2, resizeY);
+  await page.mouse.down();
+  await page.mouse.move(
+    resizeHandleBox.x + resizeHandleBox.width / 2 - 60,
+    resizeY,
+  );
+  await page.mouse.up();
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "920");
+  await resizeHandle.dblclick();
+  await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1040");
   const focusMarkdown = readingColumn.locator(".message-markdown").first();
   await expect(focusMarkdown).toBeVisible();
   await expect
@@ -215,17 +261,6 @@ test("focus and split preserve reading context and interaction ownership", async
       focusRow.evaluate((element) => getComputedStyle(element).paddingTop),
     )
     .toBe("12px");
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        Boolean(
-          document
-            .querySelector('[data-testid="focus-thread-drawer"]')
-            ?.contains(document.activeElement),
-        ),
-      ),
-    )
-    .toBe(true);
   await expect(channel).toHaveAttribute("inert", "");
 
   const anchorId = await scrollToMiddleVisibleMessage(body, rootId);
