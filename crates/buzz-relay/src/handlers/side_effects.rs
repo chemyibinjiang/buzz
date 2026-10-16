@@ -2112,11 +2112,9 @@ async fn handle_a_tag_deletion(
 
             // Try UUID first (workflow_id); fall back to name-based lookup.
             let definition_d_tag = if let Ok(wf_id) = uuid::Uuid::parse_str(d_tag) {
-                let channel_id = state
-                    .db
-                    .delete_workflow_for_owner(tenant.community(), wf_id, &target_pubkey_bytes)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("failed to delete workflow {wf_id}: {e}"))?;
+                let channel_id =
+                    delete_workflow_row_idempotently(tenant, state, wf_id, &target_pubkey_bytes)
+                        .await?;
                 if let Some(channel_id) = channel_id {
                     state
                         .workflow_engine
@@ -2136,17 +2134,13 @@ async fn handle_a_tag_deletion(
                     .await
                 {
                     Ok(Some(wf)) => {
-                        let channel_id = state
-                            .db
-                            .delete_workflow_for_owner(
-                                tenant.community(),
-                                wf.id,
-                                &target_pubkey_bytes,
-                            )
-                            .await
-                            .map_err(|e| {
-                                anyhow::anyhow!("failed to delete workflow {}: {e}", wf.id)
-                            })?;
+                        let channel_id = delete_workflow_row_idempotently(
+                            tenant,
+                            state,
+                            wf.id,
+                            &target_pubkey_bytes,
+                        )
+                        .await?;
                         if let Some(channel_id) = channel_id {
                             state
                                 .workflow_engine
@@ -2212,6 +2206,50 @@ async fn handle_a_tag_deletion(
     }
 
     Ok(())
+}
+
+/// Delete the scheduler row while allowing a NIP-09 retry to finish cleaning
+/// up a stale kind:30620 definition left by an older partial deletion.
+///
+/// `delete_workflow_for_owner` intentionally uses one atomic owner-scoped
+/// DELETE, so its NotFound result can mean either "already gone" or "wrong
+/// owner". A follow-up community-scoped lookup distinguishes those cases:
+/// only a genuinely absent row is treated as idempotent success. If the row
+/// still exists, keep failing closed rather than letting a mismatched a-tag
+/// erase another owner's definition event.
+async fn delete_workflow_row_idempotently(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    workflow_id: uuid::Uuid,
+    definition_owner: &[u8],
+) -> anyhow::Result<Option<uuid::Uuid>> {
+    match state
+        .db
+        .delete_workflow_for_owner(tenant.community(), workflow_id, definition_owner)
+        .await
+    {
+        Ok(channel_id) => Ok(channel_id),
+        Err(buzz_db::error::DbError::NotFound(_)) => {
+            match state.db.get_workflow(tenant.community(), workflow_id).await {
+                Err(buzz_db::error::DbError::NotFound(_)) => {
+                    tracing::info!(
+                        workflow_id = %workflow_id,
+                        "Workflow scheduler row already absent; continuing definition cleanup"
+                    );
+                    Ok(None)
+                }
+                Ok(_) => Err(anyhow::anyhow!(
+                    "workflow {workflow_id} exists but is not owned by the definition author"
+                )),
+                Err(error) => Err(anyhow::anyhow!(
+                    "failed to verify missing workflow {workflow_id}: {error}"
+                )),
+            }
+        }
+        Err(error) => Err(anyhow::anyhow!(
+            "failed to delete workflow {workflow_id}: {error}"
+        )),
+    }
 }
 
 fn decode_a_tag_pubkey(pubkey_hex: &str) -> anyhow::Result<Vec<u8>> {

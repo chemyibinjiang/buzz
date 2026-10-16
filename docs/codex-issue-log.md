@@ -421,3 +421,11 @@
 - 处理：默认阅读宽度调整为 1040px，在可用空间不足时仍自动缩至容器宽度；Focus Thread 标题栏新增收窄、恢复默认和加宽按钮，正文列右边缘支持连续拖动与双击复位，宽度限制在 640–1400px 并持久保存。消息列表与底部输入框继续共享同一宽度，并排 Thread 不受影响。
 - 验证：Desktop TypeScript、E2E 构建、目标文件 Biome、`check:px-text` 和 `git diff --check` 通过；宽度 helper 单测 2/2 通过；Focus Thread Playwright smoke 2/2 通过，覆盖默认 1040px、按钮收窄/复位、本地持久化、拖动收窄/双击复位，以及 Focus/Split 切换后的阅读位置和交互隔离。视觉检查确认标题栏宽度控制保持紧凑，1040px 默认列可容纳更宽的表格和科研图片。
 - 版本/提交：`Lin/develop` 当前工作区，基线 `57eaf58a`，待提交。
+
+## 2026-10-16：历史遗留的 Workflow 半删除后无法再次删除
+
+- 现象：Workflows 列表仍显示数个已禁用的定时任务，点击后运行历史返回 `404 workflow not found`，再次点击 Delete 也无法让它们从列表消失。
+- 诊断：这些任务的 scheduler 数据库行已被旧版删除逻辑移除，但列表依赖的 addressable `kind:30620` 定义事件仍存活，形成“数据库已删、定义仍在”的半删除状态。后续 NIP-09 删除虽然已经具备清理定义事件的逻辑，却先调用 owner-scoped 数据库 DELETE；数据库行已不存在时会返回 NotFound 并提前终止，因此永远执行不到定义事件清理。
+- 处理：Relay 的 Workflow 删除改为幂等清理。owner-scoped DELETE 返回 NotFound 时，再按当前 Community 和 Workflow UUID 做一次权威查询：确认数据库行确实已经不存在后，继续软删除 `kind:30620` 定义；如果行仍存在，说明是 owner 坐标不匹配，继续拒绝删除，避免越权清理其他 owner 的定义。正常删除及缓存失效路径保持不变。
+- 验证：`cargo check -p buzz-relay` 通过；Relay `handlers::side_effects::tests` 聚焦单测 7/7 通过，`git diff --check` 通过。删除前的 NIP-09 授权仍要求操作者是定义作者或该 Agent 的 owner；数据库行仍存在但坐标 owner 不匹配时明确失败，只有权威查询确认行已不存在时才继续清理定义。仍需真实 Relay 部署后验证历史遗留定义消失；只有 Desktop 安装包无法清理服务端数据。
+- 版本/提交：`Lin/develop` 当前工作区，基线 `3174bc6c`，待提交。
