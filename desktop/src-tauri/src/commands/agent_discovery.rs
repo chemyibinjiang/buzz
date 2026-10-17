@@ -10,7 +10,7 @@ use crate::{
 };
 
 mod post_install_verification;
-mod relay_agent_directory;
+pub(super) mod relay_agent_directory;
 
 fn active_installs() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
     use std::collections::HashSet;

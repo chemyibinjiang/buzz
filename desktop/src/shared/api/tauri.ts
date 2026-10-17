@@ -106,6 +106,7 @@ type RawRelayAgent = {
   deleted?: boolean;
   persona_id?: string | null;
   codex_task?: boolean;
+  codex_task_key?: string | null;
   managed_definition?: boolean;
   agent_type: string;
   channels: string[];
@@ -673,6 +674,7 @@ function fromRawRelayAgent(agent: RawRelayAgent): RelayAgent {
     deleted: agent.deleted ?? false,
     personaId: agent.persona_id ?? null,
     codexTask: agent.codex_task ?? false,
+    codexTaskKey: agent.codex_task_key ?? null,
     managedDefinition: agent.managed_definition ?? false,
     agentType: agent.agent_type,
     channels: agent.channels,

@@ -210,6 +210,9 @@ pub struct RelayAgentInfo {
     /// task instances in Custom agents without copying the local task binding.
     #[serde(default)]
     pub codex_task: bool,
+    /// Stable public digest used to recognize one Codex task across devices.
+    #[serde(default)]
+    pub codex_task_key: Option<String>,
     /// True only when a verified owner-authored kind:30177 record backed this
     /// directory row. Consumers use it to avoid treating an arbitrary owned
     /// profile as a synchronized managed instance.

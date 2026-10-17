@@ -469,3 +469,19 @@
 - 处理：kind:30177 增加向后兼容的 `codex_task` 布尔来源标记，boot reconcile 与交互保存从本机 binding sidecar 读取该事实，但不发布 task id、目录、app-server、SSH 或凭据。Relay Agent 目录同时暴露可信的 `persona_id`、`codex_task` 和 `managed_definition`。Agents 页面把同 owner、已验证且仅存在于另一设备的 Managed Agent 作为独立 Remote 卡片展示；Codex task Remote 卡始终进入 Custom agents，不提供本机 Start/Edit，只打开 Agent profile/消息入口；若旧版本曾基于同一 persona 误建本机副本，远端 task 投影会优先隐藏该错误启动入口。页面新增 `Sync agents`，主动拉取并落地当前账户的 persona/team/managed-agent heads 后刷新本机、Relay 和 Persona 查询，而非仅刷新缓存。
 - 验证：前端分组与 Persona sync 聚焦测试 8/8 通过，覆盖远端 Codex task 固定进入 Custom agents、普通远端 persona 保持分组且不成为本机实例，以及手动同步会等待全部 owner 事件完成落地；Rust 聚焦测试验证仅公开 `codex_task` 标记而不泄漏 task/workspace/app-server/SSH 字段，以及 Relay 目录正确返回 Codex 来源与 persona。Desktop TypeScript、Biome、`check:px-text`、Rustfmt、Tauri 编译和两个 Tauri 聚焦测试通过；新增 Playwright 回归确认同账户远端 Codex task 显示在 Custom agents、显示 Remote online、没有本机 Start 控件和重复 Persona 启动卡。Tauri 编译仅有仓库既有 unused 警告。
 - 版本/提交：Buzz Codex Lab `0.5.20` 后续工作区，`Lin/develop`，待提交。
+
+## 2026-10-17：Agents 页面显示同名不同公钥的远端重复项及已删除旧 Agent
+
+- 现象：Agents 页面当前电脑的三个 Codex task Agent（`Experiment Designer`、`test talk 1`、`test talk 2`）之外，还显示五个“On another computer”条目。用户确认前三个确实是本机 Agent，并指出同名条目的公钥不同是错误状态。
+- 诊断：本机 `managed-agents.json` 与 Codex task binding sidecar 确认上述三个当前 Agent 各自有本机身份记录和 task binding。`managed-agents.json.pre-backfill.bak` 还保留旧的 `Experiment Designer`、`Flowsim Operator` 和 `Manage DDA simulations` 身份；本机旧运行日志也确认这些身份曾在此安装上启动，但当前主配置中已不存在。当前 Relay 目录投影只根据拥有者签名、`managed_definition`、`codex_task`、本机 pubkey 是否存在及 NIP-09 / NIP-IA 删除记录来决定显示；kind:30177 没有稳定的逻辑 Agent ID 或设备实例来源字段，因此同名而 pubkey 不同的身份被当成不同 Agent。更早版本若删除时未发布 kind:5 / kind:13535 tombstone，启动 reconcile 明确不会根据本机文件缺失自动删除远端记录，以避免误删另一台设备的 Agent，旧身份就会继续出现。现有证据能确认至少三条远端卡片是本机历史身份残留；两条 `test talk` 远端副本的来源设备仍需检查 Relay 原始记录才能断言。
+- 处理：本轮仅核验并记录根因，未按名称自动去重、隐藏或向 Relay 删除记录。仅按名称合并会误伤用户有意创建的同名 Agent；自动把缺少本机记录视为删除也会误删其他电脑上的有效 Agent。正确修复需要在远端卡片提供经过 owner 校验的显式“移除/归档”路径，并为跨设备 Agent 建立稳定逻辑身份或设备清单，不能把各设备独立生成的公钥伪装成同一个身份。
+- 验证：检查了当前本机 Agent 配置、task binding、迁移前备份、相关 Agent 运行日志，以及 Relay Agent 投影和 tombstone/reconcile 代码路径；未访问或输出私钥、Auth tag、API key 或 task 会话正文。未修改产品代码，尚未验证 Relay 上各远端公钥是否已有墓碑。
+- 版本/提交：Buzz Codex Lab `0.5.20`，基线 `f84276e2`；本条为诊断记录，待后续实现修复。
+
+## 2026-10-18：同一 Codex task 在不同电脑上被创建为不同 Agent 身份
+
+- 现象：同一 Buzz 账户切换电脑后，再次从相同 Codex task 创建 Agent 会生成新的 Nostr 密钥和公钥；Relay 因而显示多个同名但公钥不同的 Agent，消息、设置和运行状态也被拆成不同身份。
+- 诊断：Codex task binding 仅保存在设备本地，公开的 kind:30177 此前只有 `codex_task: true`，没有可用于识别“这是同一个 task”的稳定字段。每台电脑只能知道本机 binding，创建流程只检查本机 `codex-task-bindings.json`，所以跨设备必然重新生成密钥。按名称合并不安全，因为用户可以合法创建同名 Agent；同步私钥、workspace、SSH 或 app-server 配置又会破坏设备和凭据边界。
+- 处理：为规范化 Codex task UUID 生成带域分隔的 SHA-256 `codex_task_key`，通过 owner 验证后的 kind:30177 公开投影同步；不公开原始 task ID、workspace、app-server、SSH 配置或凭据。启动 reconcile 和交互保存都会补发该指纹。选择 task 时 UI 会提示已存在的同账户远端 Agent并禁用创建；真正的 Rust 创建命令也会查询 Relay 目录并在生成新密钥前拒绝重复，避免绕过 UI。旧版没有指纹的历史 Agent保持兼容且不会被自动删除，防止误删其他设备仍在运行的身份。
+- 验证：Rust 单测覆盖相同 UUID 的大小写形式生成相同 64 位指纹、不同 task 生成不同指纹、公开内容不包含 task/workspace/SSH 字段，以及 Relay 目录能解析指纹；Tauri `cargo check`、Desktop TypeScript typecheck 和目标 Biome 检查通过。待用两台电脑实测：第一台新版本启动后发布指纹，第二台同步 Agent 后选择同一 task，应显示已有远端 Agent且无法生成第二个公钥。
+- 版本/提交：Buzz Codex Lab `0.5.20` 后续测试版，`Lin/develop`，基线 `f84276e2`，待提交。

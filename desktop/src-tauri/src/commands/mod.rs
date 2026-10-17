@@ -2,6 +2,7 @@ mod agent_access;
 mod agent_auth;
 mod agent_config;
 mod agent_discovery;
+pub(crate) use agent_discovery::relay_agent_directory::list_relay_agents as list_relay_agents_internal;
 mod agent_logs;
 mod agent_metric_archive;
 mod agent_model_process;

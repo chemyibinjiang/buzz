@@ -1,6 +1,49 @@
 use super::*;
 use crate::managed_agents::AgentDefinition;
 
+fn relay_agent(
+    pubkey: &str,
+    owner: &str,
+    task_key: Option<&str>,
+    deleted: bool,
+) -> crate::managed_agents::RelayAgentInfo {
+    crate::managed_agents::RelayAgentInfo {
+        pubkey: pubkey.to_string(),
+        name: "Task agent".to_string(),
+        owner_pubkey: Some(owner.to_string()),
+        deleted,
+        persona_id: None,
+        codex_task: task_key.is_some(),
+        codex_task_key: task_key.map(str::to_string),
+        managed_definition: true,
+        agent_type: "agent".to_string(),
+        channels: Vec::new(),
+        channel_ids: Vec::new(),
+        capabilities: Vec::new(),
+        status: "offline".to_string(),
+        respond_to: None,
+        respond_to_allowlist: Vec::new(),
+    }
+}
+
+#[test]
+fn cross_device_task_duplicate_requires_same_owner_and_task_key() {
+    let agents = vec![
+        relay_agent("same-task", "owner", Some("task-key"), false),
+        relay_agent("other-owner", "other", Some("task-key"), false),
+        relay_agent("legacy", "owner", None, false),
+        relay_agent("deleted", "owner", Some("task-key"), true),
+    ];
+
+    assert_eq!(
+        remote_codex_task_duplicate(&agents, "owner", "task-key", None)
+            .map(|agent| agent.pubkey.as_str()),
+        Some("same-task")
+    );
+    assert!(remote_codex_task_duplicate(&agents, "owner", "other-key", None).is_none());
+    assert!(remote_codex_task_duplicate(&agents, "owner", "task-key", Some("same-task")).is_none());
+}
+
 #[test]
 fn task_bound_restart_prefers_the_active_workspace_pair() {
     let pubkey = "aa".repeat(32);

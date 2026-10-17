@@ -47,6 +47,10 @@ pub struct ManagedAgentEventContent {
     /// Start/Edit flow that would create a second, unbound instance.
     #[serde(default, skip_serializing_if = "is_false")]
     pub codex_task: bool,
+    /// Stable digest of the Codex task UUID. This lets another owner device
+    /// recognize an existing binding without exposing task or machine data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_task_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,11 +89,21 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
 
 /// Project a record with the device-local origin facts supplied explicitly.
 ///
-/// Codex task bindings stay in their protected local sidecar store. Only the
-/// non-sensitive classification bit is added to the public projection.
+/// Codex task bindings stay in their protected local sidecar store. Legacy
+/// callers can still publish only the non-sensitive classification bit.
 pub fn agent_event_content_with_origin(
     record: &ManagedAgentRecord,
     codex_task: bool,
+) -> ManagedAgentEventContent {
+    let mut projection = agent_event_content_with_task_key(record, None);
+    projection.codex_task = codex_task;
+    projection
+}
+
+/// Project a record with an optional stable Codex task key.
+pub fn agent_event_content_with_task_key(
+    record: &ManagedAgentRecord,
+    codex_task_key: Option<&str>,
 ) -> ManagedAgentEventContent {
     // Slimmed projection (NIP-AP "Slimming: kind:30177"): definition-linked
     // instances resolve prompt/model/provider/source_version through their
@@ -103,7 +117,8 @@ pub fn agent_event_content_with_origin(
     ManagedAgentEventContent {
         name: record.name.clone(),
         persona_id: record.persona_id.clone(),
-        codex_task,
+        codex_task: codex_task_key.is_some(),
+        codex_task_key: codex_task_key.map(str::to_string),
         system_prompt: if definition_linked {
             None
         } else {
@@ -196,13 +211,27 @@ pub fn build_agent_event_with_origin(
     record: &ManagedAgentRecord,
     codex_task: bool,
 ) -> Result<EventBuilder, String> {
+    if codex_task {
+        return build_agent_event_with_task_key(record, None, true);
+    }
+    build_agent_event_with_task_key(record, None, false)
+}
+
+/// Build a kind:30177 event with the optional stable Codex task key.
+pub fn build_agent_event_with_task_key(
+    record: &ManagedAgentRecord,
+    codex_task_key: Option<&str>,
+    codex_task: bool,
+) -> Result<EventBuilder, String> {
     super::validate_managed_agent_definition_text(
         &record.name,
         record.persona_id.as_deref(),
         record.system_prompt.as_deref(),
     )
     .map_err(|error| format!("Managed agent definition is unsafe to publish: {error}"))?;
-    let content = serde_json::to_string(&agent_event_content_with_origin(record, codex_task))
+    let mut projection = agent_event_content_with_task_key(record, codex_task_key);
+    projection.codex_task = codex_task || codex_task_key.is_some();
+    let content = serde_json::to_string(&projection)
         .map_err(|e| format!("failed to serialize managed-agent content: {e}"))?;
     let tags =
         vec![Tag::parse(["d", record.pubkey.as_str()]).map_err(|e| format!("invalid d-tag: {e}"))?];
@@ -458,6 +487,22 @@ mod tests {
         assert!(!json.contains("app_server_url"));
         assert!(!json.contains("ssh_host"));
         assert!(!json.contains("identity_file"));
+    }
+
+    #[test]
+    fn codex_task_projection_publishes_only_an_opaque_stable_key() {
+        let key = "a".repeat(64);
+        let json = serde_json::to_string(&agent_event_content_with_task_key(
+            &sample_agent(),
+            Some(&key),
+        ))
+        .unwrap();
+
+        assert!(json.contains("\"codex_task\":true"));
+        assert!(json.contains(&format!("\"codex_task_key\":\"{key}\"")));
+        assert!(!json.contains("task_id"));
+        assert!(!json.contains("workspace"));
+        assert!(!json.contains("ssh_host"));
     }
 
     #[test]

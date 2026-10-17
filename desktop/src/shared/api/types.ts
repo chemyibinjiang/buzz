@@ -274,6 +274,7 @@ export type RelayAgent = {
   deleted: boolean;
   personaId: string | null;
   codexTask: boolean;
+  codexTaskKey: string | null;
   managedDefinition: boolean;
   agentType: string;
   channels: string[];

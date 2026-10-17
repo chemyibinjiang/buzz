@@ -11,6 +11,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 use uuid::Uuid;
 
@@ -201,13 +202,29 @@ pub fn load_codex_task_binding(
     Ok(load_binding_store(app)?.bindings.get(agent_pubkey).cloned())
 }
 
-/// Return only the agent pubkeys that have a device-local Codex task binding.
+/// Stable, non-reversible public identifier for a Codex task binding.
 ///
-/// Boot reconciliation uses this to publish the non-sensitive `codex_task`
-/// classification without copying task ids, workspace paths, SSH settings, or
-/// any other binding details into the relay event.
-pub fn load_codex_task_bound_agent_pubkeys(app: &AppHandle) -> Result<HashSet<String>, String> {
-    Ok(load_binding_store(app)?.bindings.into_keys().collect())
+/// The domain prefix prevents the digest from being confused with hashes used
+/// elsewhere. Only the normalized UUID participates: workspace paths, remote
+/// hosts, app-server URLs, and credentials never leave the device.
+pub fn codex_task_key(task_id: &str) -> Result<String, String> {
+    let normalized = Uuid::parse_str(task_id.trim())
+        .map_err(|_| "Codex task ID must be a UUID".to_string())?
+        .to_string();
+    Ok(hex::encode(Sha256::digest(
+        format!("buzz:codex-task:v1:{normalized}").as_bytes(),
+    )))
+}
+
+/// Return the stable public task key for every locally bound agent identity.
+/// Boot reconciliation publishes these opaque digests without copying task
+/// ids, workspace paths, SSH settings, or other binding details.
+pub fn load_codex_task_agent_keys(app: &AppHandle) -> Result<HashMap<String, String>, String> {
+    load_binding_store(app)?
+        .bindings
+        .into_iter()
+        .map(|(pubkey, binding)| codex_task_key(&binding.task_id).map(|key| (pubkey, key)))
+        .collect()
 }
 
 pub fn codex_task_binding_owner(app: &AppHandle, task_id: &str) -> Result<Option<String>, String> {
@@ -957,6 +974,28 @@ mod tests {
     use super::*;
     use std::fs::OpenOptions;
     use std::io::Write as _;
+
+    #[test]
+    fn task_key_is_stable_for_equivalent_uuid_spellings() {
+        let lower = "019eca9a-beb9-7902-8ce6-527b2ba56020";
+        let upper = "019ECA9A-BEB9-7902-8CE6-527B2BA56020";
+        assert_eq!(
+            codex_task_key(lower).unwrap(),
+            codex_task_key(upper).unwrap()
+        );
+        assert_eq!(codex_task_key(lower).unwrap().len(), 64);
+    }
+
+    #[test]
+    fn task_key_differs_between_tasks_and_discloses_no_binding_data() {
+        let first = "019eca9a-beb9-7902-8ce6-527b2ba56020";
+        let second = "019eca9a-beb9-7902-8ce6-527b2ba56021";
+        let key = codex_task_key(first).unwrap();
+        assert_ne!(key, codex_task_key(second).unwrap());
+        assert!(!key.contains(first));
+        assert!(!key.contains("workspace"));
+        assert!(!key.contains("ssh"));
+    }
 
     #[test]
     fn reads_codex_session_metadata() {

@@ -85,6 +85,7 @@ pub(crate) fn relay_agents_from_events(
         // this owner has a synchronized managed-instance definition.
         agent.persona_id = None;
         agent.codex_task = false;
+        agent.codex_task_key = None;
         agent.managed_definition = false;
     }
     let mut agent_indexes: HashMap<String, usize> = agents
@@ -168,6 +169,7 @@ pub(crate) fn relay_agents_from_events(
             }
             agent.persona_id = content.persona_id;
             agent.codex_task = content.codex_task;
+            agent.codex_task_key = content.codex_task_key;
             agent.managed_definition = true;
             agent.respond_to = Some(content.respond_to);
             agent.respond_to_allowlist = content.respond_to_allowlist;
@@ -185,6 +187,7 @@ pub(crate) fn relay_agents_from_events(
             deleted: deleted.contains_key(&pubkey),
             persona_id: content.persona_id,
             codex_task: content.codex_task,
+            codex_task_key: content.codex_task_key,
             managed_definition: true,
             agent_type: "agent".to_string(),
             channels: Vec::new(),
@@ -217,6 +220,7 @@ pub(crate) fn relay_agents_from_events(
             deleted: true,
             persona_id: None,
             codex_task: false,
+            codex_task_key: None,
             managed_definition: false,
             agent_type: "agent".to_string(),
             channels: Vec::new(),
@@ -283,6 +287,7 @@ mod tests {
         assert_eq!(agents[0].name, "Remote Scout");
         assert!(agents[0].managed_definition);
         assert!(!agents[0].codex_task);
+        assert!(agents[0].codex_task_key.is_none());
         assert_eq!(
             agents[0].respond_to,
             Some(crate::managed_agents::RespondTo::Anyone)
@@ -298,7 +303,7 @@ mod tests {
         let managed = managed_agent_event(
             &agent_pubkey,
             &owner_keys,
-            r#"{"name":"Task agent","persona_id":"persona-task","codex_task":true,"parallelism":1,"respond_to":"owner-only"}"#,
+            r#"{"name":"Task agent","persona_id":"persona-task","codex_task":true,"codex_task_key":"task-key","parallelism":1,"respond_to":"owner-only"}"#,
         );
 
         let agents = relay_agents_from_events(&[managed], &[identity_profile]);
@@ -306,6 +311,7 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].persona_id.as_deref(), Some("persona-task"));
         assert!(agents[0].codex_task);
+        assert_eq!(agents[0].codex_task_key.as_deref(), Some("task-key"));
         assert!(agents[0].managed_definition);
     }
 

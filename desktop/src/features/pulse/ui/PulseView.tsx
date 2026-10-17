@@ -117,6 +117,7 @@ export function PulseView({ currentPubkey }: PulseViewProps) {
           deleted: false,
           personaId: agent.personaId,
           codexTask: Boolean(agent.codexTaskBinding),
+          codexTaskKey: null,
           managedDefinition: false,
         });
       }

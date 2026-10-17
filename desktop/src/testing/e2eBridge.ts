@@ -855,6 +855,7 @@ type RawRelayAgent = {
   deleted?: boolean;
   persona_id?: string | null;
   codex_task?: boolean;
+  codex_task_key?: string | null;
   managed_definition?: boolean;
   agent_type: string;
   channels: string[];

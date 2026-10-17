@@ -209,12 +209,14 @@ with a TypeScript lookup table or an id comparison in a component.
    remote agent that can be opened and messaged, but it must not be inserted
    into `ManagedAgent[]`, offered a local Start/Edit action, or evaluated
    against that computer's provider credentials. Codex task bindings remain
-   device-local; kind:30177 publishes only the non-sensitive `codex_task`
-   classification so every owner device keeps those identities in Custom
-   agents and does not expose the synced persona as a button that creates an
-   accidental second instance. Remote cards must be derived from verified
-   managed-directory rows (`managedDefinition`), not arbitrary profiles whose
-   NIP-OA owner happens to match the current user.
+   device-local; kind:30177 publishes the non-sensitive `codex_task`
+   classification plus `codex_task_key`, a domain-separated SHA-256 digest of
+   the normalized task UUID. The digest may be used only to recognize an
+   existing owner-authored binding and prevent another device from minting a
+   second Buzz identity; it must never include or be replaced by the task UUID,
+   workspace, app-server URL, SSH configuration, or credentials. Remote cards
+   must be derived from verified managed-directory rows (`managedDefinition`),
+   not arbitrary profiles whose NIP-OA owner happens to match the current user.
 
 ## The tests that enforce this
 

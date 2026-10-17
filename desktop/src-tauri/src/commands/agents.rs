@@ -32,6 +32,20 @@ pub(super) fn workspace_owner_hex(state: &AppState) -> Result<String, String> {
     Ok(keys.public_key().to_hex())
 }
 
+fn remote_codex_task_duplicate<'a>(
+    agents: &'a [crate::managed_agents::RelayAgentInfo],
+    owner_pubkey: &str,
+    task_key: &str,
+    local_agent_pubkey: Option<&str>,
+) -> Option<&'a crate::managed_agents::RelayAgentInfo> {
+    agents.iter().find(|agent| {
+        !agent.deleted
+            && agent.owner_pubkey.as_deref() == Some(owner_pubkey)
+            && agent.codex_task_key.as_deref() == Some(task_key)
+            && local_agent_pubkey != Some(agent.pubkey.as_str())
+    })
+}
+
 /// Retain a freshly authored managed-agent event in the local store, flagged
 /// for relay sync. MUST be called inside the `managed_agents_store_lock`-held
 /// body after `save_managed_agents`, NEVER across an `.await`: it acquires
@@ -70,10 +84,16 @@ pub(super) fn retain_managed_agent_pending(
             || matches!(agent_readiness(&effective), AgentReadiness::Ready);
         let directory_record =
             crate::managed_agents::agent_events::directory_record_for_readiness(record, ready);
-        let codex_task =
-            crate::managed_agents::load_codex_task_binding(app, &record.pubkey)?.is_some();
-        retain_agent_record_with_origin(&conn, &scope.owner_keys, &directory_record, codex_task)
-            .map(|_| ())
+        let codex_task_key = crate::managed_agents::load_codex_task_binding(app, &record.pubkey)?
+            .map(|binding| crate::managed_agents::codex_task_key(&binding.task_id))
+            .transpose()?;
+        retain_agent_record_with_origin(
+            &conn,
+            &scope.owner_keys,
+            &directory_record,
+            codex_task_key.as_deref(),
+        )
+        .map(|_| ())
     })();
     if let Err(e) = result {
         eprintln!("buzz-desktop: agent-retain: {e}");
@@ -658,6 +678,34 @@ pub async fn create_managed_agent(
     // Snapshot the workspace owner pubkey for the legacy-record auth_tag
     // fallback. Computed outside the records lock to keep lock ordering simple.
     let owner_hex = workspace_owner_hex(&state)?;
+
+    // A Codex task UUID is stable across the user's computers, while the
+    // generated Buzz agent key is not. Refuse to mint a second identity when
+    // another owner device has already advertised the same non-sensitive task
+    // digest. Relay discovery is best-effort so an unavailable community does
+    // not remove the existing offline creation path.
+    if let Some(binding) = codex_task_binding.as_ref() {
+        let task_key = crate::managed_agents::codex_task_key(&binding.task_id)?;
+        let local_agent_pubkey = codex_task_binding_owner(&app, &binding.task_id)?;
+        match crate::commands::list_relay_agents_internal(&state).await {
+            Ok(agents) => {
+                if let Some(existing) = remote_codex_task_duplicate(
+                    &agents,
+                    &owner_hex,
+                    &task_key,
+                    local_agent_pubkey.as_deref(),
+                ) {
+                    return Err(format!(
+                        "This Codex task is already linked to agent '{}' ({}) on another device. Use the existing remote agent instead of creating a duplicate identity.",
+                        existing.name, existing.pubkey
+                    ));
+                }
+            }
+            Err(error) => {
+                eprintln!("buzz-desktop: could not check cross-device Codex task bindings: {error}")
+            }
+        }
+    }
 
     // ── Phase 1: generate keys (sync lock) ────────────────────────────────────
     let (agent_keys, private_key_nsec, pubkey, resolved_relay_url, replacement_agent_pubkey, input) = {

@@ -695,6 +695,7 @@ fn inbound_managed_agent_content(
         name: name.to_string(),
         persona_id: persona_id.map(str::to_string),
         codex_task: false,
+        codex_task_key: None,
         system_prompt: system_prompt.map(str::to_string),
         model: None,
         provider: None,

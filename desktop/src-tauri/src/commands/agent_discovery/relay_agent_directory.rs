@@ -2,7 +2,7 @@ use crate::{
     app_state::AppState, managed_agents::RelayAgentInfo, nostr_convert, relay::query_relay,
 };
 
-pub(super) async fn list_relay_agents(state: &AppState) -> Result<Vec<RelayAgentInfo>, String> {
+pub(crate) async fn list_relay_agents(state: &AppState) -> Result<Vec<RelayAgentInfo>, String> {
     // Self-authored directory profiles and owner-authored managed-agent
     // definitions are both public discovery sources.
     let events = query_relay(

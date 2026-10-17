@@ -6,6 +6,7 @@ import {
   useAvailableAcpRuntimes,
   useCodexTasksQuery,
   useCreateManagedAgentMutation,
+  useRelayAgentsQuery,
 } from "@/features/agents/hooks";
 import { useCodexSharedRuntimeQuery } from "@/features/agents/codexSharedRuntimeHooks";
 import { isCodexSharedRuntimeUsable } from "@/features/agents/codexSharedRuntimeStatus";
@@ -16,8 +17,10 @@ import {
   listCodexSshTasks,
   stopCodexSsh,
 } from "@/shared/api/codexTasks";
+import { codexTaskKey } from "@/shared/api/codexTaskKey";
 import type { CodexTaskSummary } from "@/shared/api/codexTaskTypes";
 import type { ManagedAgent } from "@/shared/api/types";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -55,6 +58,8 @@ export function CodexTaskAgentDialog({
     enabled: open,
   });
   const channelsQuery = useChannelsQuery({ enabled: open });
+  const relayAgentsQuery = useRelayAgentsQuery({ enabled: open });
+  const identityQuery = useIdentityQuery();
   const createMutation = useCreateManagedAgentMutation();
   const attachMutation = useAttachManagedAgentToChannelMutation(null);
   const [search, setSearch] = React.useState("");
@@ -81,6 +86,9 @@ export function CodexTaskAgentDialog({
   const [remoteTasks, setRemoteTasks] = React.useState<CodexTaskSummary[]>([]);
   const [remoteTasksPending, setRemoteTasksPending] = React.useState(false);
   const [remoteTaskId, setRemoteTaskId] = React.useState<string | null>(null);
+  const [selectedTaskKey, setSelectedTaskKey] = React.useState<string | null>(
+    null,
+  );
   const codexSetupReady = Boolean(codexRuntime);
 
   const tasks = tasksQuery.data ?? [];
@@ -97,6 +105,31 @@ export function CodexTaskAgentDialog({
   const selectedRemoteTask =
     remoteTasks.find((task) => task.id === remoteTaskId) ?? null;
   const selectedTaskForSubmit = selectedRemoteTask ?? selectedTask;
+  React.useEffect(() => {
+    let active = true;
+    const id = selectedTaskForSubmit?.id;
+    if (!id) {
+      setSelectedTaskKey(null);
+      return () => {
+        active = false;
+      };
+    }
+    void codexTaskKey(id).then((key) => {
+      if (active) setSelectedTaskKey(key);
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedTaskForSubmit?.id]);
+  const existingTaskAgent = (relayAgentsQuery.data ?? []).find(
+    (agent) =>
+      !agent.deleted &&
+      Boolean(identityQuery.data?.pubkey) &&
+      agent.ownerPubkey?.toLocaleLowerCase() ===
+        identityQuery.data?.pubkey.toLocaleLowerCase() &&
+      selectedTaskKey !== null &&
+      agent.codexTaskKey === selectedTaskKey,
+  );
   const selectedTaskRuntimeReady = selectedRemoteTask
     ? sshRuntime !== null
     : sharedRuntimeReady;
@@ -155,6 +188,7 @@ export function CodexTaskAgentDialog({
     setSshError(null);
     setRemoteTasks([]);
     setRemoteTaskId(null);
+    setSelectedTaskKey(null);
     createMutation.reset();
     attachMutation.reset();
   }
@@ -620,6 +654,18 @@ export function CodexTaskAgentDialog({
                   </div>
                 ) : null}
 
+                {existingTaskAgent ? (
+                  <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm leading-5 text-amber-800 dark:text-amber-200">
+                    This Codex task is already linked to{" "}
+                    {existingTaskAgent.name}
+                    <span className="ml-1 font-mono text-xs">
+                      ({existingTaskAgent.pubkey.slice(0, 8)})
+                    </span>
+                    . Use that remote agent instead of creating another
+                    identity.
+                  </p>
+                ) : null}
+
                 <div className="space-y-1.5">
                   <label
                     className="text-sm font-medium"
@@ -673,7 +719,8 @@ export function CodexTaskAgentDialog({
                 !codexRuntime ||
                 !name.trim() ||
                 createMutation.isPending ||
-                attachMutation.isPending
+                attachMutation.isPending ||
+                Boolean(existingTaskAgent)
               }
               onClick={() => void handleSubmit()}
               size="sm"
