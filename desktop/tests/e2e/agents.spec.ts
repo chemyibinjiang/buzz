@@ -226,6 +226,51 @@ async function countCommandInvocations(
   );
 }
 
+test("remote Codex task agents sync into Custom agents without local runtime controls", async ({
+  page,
+}) => {
+  const personaId = "custom:remote-codex-task";
+  const pubkey = "cd".repeat(32);
+  await seedActiveIdentity(page, TEST_IDENTITIES.tyler);
+  await installMockBridge(page, {
+    personas: [
+      {
+        displayName: "Remote Codex Task",
+        id: personaId,
+        systemPrompt: "Continue the linked Codex task.",
+      },
+    ],
+    relayAgents: [
+      {
+        codexTask: true,
+        managedDefinition: true,
+        name: "Remote Codex Task",
+        ownerPubkey: TEST_IDENTITIES.tyler.pubkey,
+        personaId,
+        pubkey,
+        status: "online",
+      },
+    ],
+  });
+  await gotoApp(page);
+  await page.getByTestId("open-agents-view").click();
+
+  const customAgents = page
+    .getByRole("button", { name: /Custom agents/ })
+    .locator("xpath=..");
+  await expect(
+    customAgents.getByTestId(`remote-agent-${pubkey}`),
+  ).toBeVisible();
+  await expect(customAgents).toContainText("Remote online");
+  await expect(page.getByTestId(`agent-runtime-start-${pubkey}`)).toHaveCount(
+    0,
+  );
+  await expect(page.getByTestId(`persona-agent-row-${personaId}`)).toHaveCount(
+    0,
+  );
+  await expect(page.getByTestId("sync-agents-button")).toBeVisible();
+});
+
 test("catalog hides built-ins and shows the shared-agent empty state", async ({
   page,
 }) => {

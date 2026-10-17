@@ -694,6 +694,7 @@ fn inbound_managed_agent_content(
     crate::managed_agents::agent_events::ManagedAgentEventContent {
         name: name.to_string(),
         persona_id: persona_id.map(str::to_string),
+        codex_task: false,
         system_prompt: system_prompt.map(str::to_string),
         model: None,
         provider: None,

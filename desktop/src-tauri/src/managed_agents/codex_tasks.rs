@@ -201,6 +201,15 @@ pub fn load_codex_task_binding(
     Ok(load_binding_store(app)?.bindings.get(agent_pubkey).cloned())
 }
 
+/// Return only the agent pubkeys that have a device-local Codex task binding.
+///
+/// Boot reconciliation uses this to publish the non-sensitive `codex_task`
+/// classification without copying task ids, workspace paths, SSH settings, or
+/// any other binding details into the relay event.
+pub fn load_codex_task_bound_agent_pubkeys(app: &AppHandle) -> Result<HashSet<String>, String> {
+    Ok(load_binding_store(app)?.bindings.into_keys().collect())
+}
+
 pub fn codex_task_binding_owner(app: &AppHandle, task_id: &str) -> Result<Option<String>, String> {
     Ok(load_binding_store(app)?
         .bindings

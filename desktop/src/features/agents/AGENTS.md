@@ -204,6 +204,17 @@ with a TypeScript lookup table or an id comparison in a component.
    effective configuration becomes Ready, the requested public policy is
    advertised again. Provider-backed remote instances are not evaluated with
    local credentials and retain their requested public policy.
+15. **Cross-device agent sync never manufactures a local runtime.** A verified
+   owner-authored kind:30177 record may be shown on another computer as a
+   remote agent that can be opened and messaged, but it must not be inserted
+   into `ManagedAgent[]`, offered a local Start/Edit action, or evaluated
+   against that computer's provider credentials. Codex task bindings remain
+   device-local; kind:30177 publishes only the non-sensitive `codex_task`
+   classification so every owner device keeps those identities in Custom
+   agents and does not expose the synced persona as a button that creates an
+   accidental second instance. Remote cards must be derived from verified
+   managed-directory rows (`managedDefinition`), not arbitrary profiles whose
+   NIP-OA owner happens to match the current user.
 
 ## The tests that enforce this
 

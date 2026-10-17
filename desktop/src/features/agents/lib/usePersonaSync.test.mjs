@@ -8,7 +8,7 @@ import {
   KIND_PERSONA,
   KIND_TEAM,
 } from "@/shared/constants/kinds";
-import { startPersonaSync } from "./usePersonaSync.ts";
+import { startPersonaSync, syncPersonaHeads } from "./usePersonaSync.ts";
 
 const EXPECTED_KINDS = [
   KIND_PERSONA,
@@ -104,6 +104,35 @@ test("startPersonaSync forwards its own relay as the event arrival relay", async
     "reconcile must carry the subscription's relay as the arrival relay",
   );
   assert.equal(JSON.parse(reconciles[0].args.eventJson).id, "e1");
+
+  mock.reset();
+  delete globalThis.window;
+});
+
+test("syncPersonaHeads waits until every owner event is reconciled", async () => {
+  const invokes = [];
+  globalThis.window = {
+    __TAURI_INTERNALS__: {
+      invoke: async (cmd, args) => {
+        invokes.push({ cmd, args });
+      },
+    },
+  };
+  mock.method(relayClient, "fetchEvents", () =>
+    Promise.resolve([
+      { id: "p1", pubkey: "owner-pubkey", kind: KIND_PERSONA },
+      { id: "a1", pubkey: "owner-pubkey", kind: KIND_MANAGED_AGENT },
+      { id: "foreign", pubkey: "someone-else", kind: KIND_MANAGED_AGENT },
+    ]),
+  );
+
+  const applied = await syncPersonaHeads("owner-pubkey", "wss://relay.example");
+
+  assert.equal(applied, 2);
+  assert.deepEqual(
+    invokes.map((call) => JSON.parse(call.args.eventJson).id),
+    ["p1", "a1"],
+  );
 
   mock.reset();
   delete globalThis.window;

@@ -19,9 +19,16 @@ pub(super) async fn list_relay_agents(state: &AppState) -> Result<Vec<RelayAgent
     for event in events.iter().filter(|event| event.kind.as_u16() == 5) {
         for tag in event.tags.iter() {
             let values = tag.as_slice();
-            if values.first().map(String::as_str) != Some("a") { continue; }
-            if let Some(agent) = values.get(1).and_then(|coordinate| coordinate.split(':').nth(2)) {
-                if agent.len() == 64 { target_pubkeys.push(agent.to_ascii_lowercase()); }
+            if values.first().map(String::as_str) != Some("a") {
+                continue;
+            }
+            if let Some(agent) = values
+                .get(1)
+                .and_then(|coordinate| coordinate.split(':').nth(2))
+            {
+                if agent.len() == 64 {
+                    target_pubkeys.push(agent.to_ascii_lowercase());
+                }
             }
         }
     }

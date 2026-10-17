@@ -123,6 +123,10 @@ type MockRelayAgentSeed = {
   pubkey: string;
   name: string;
   agentType?: string;
+  ownerPubkey?: string | null;
+  personaId?: string | null;
+  codexTask?: boolean;
+  managedDefinition?: boolean;
   capabilities?: string[];
   respondTo?: RawRelayAgent["respond_to"];
   respondToAllowlist?: string[];
@@ -849,6 +853,9 @@ type RawRelayAgent = {
   name: string;
   owner_pubkey?: string | null;
   deleted?: boolean;
+  persona_id?: string | null;
+  codex_task?: boolean;
+  managed_definition?: boolean;
   agent_type: string;
   channels: string[];
   channel_ids: string[];
@@ -2335,6 +2342,10 @@ function resetMockRelayAgents(config?: E2eConfig) {
       pubkey: seed.pubkey,
       name: seed.name,
       agent_type: seed.agentType ?? "goose",
+      owner_pubkey: seed.ownerPubkey ?? null,
+      persona_id: seed.personaId ?? null,
+      codex_task: seed.codexTask ?? false,
+      managed_definition: seed.managedDefinition ?? false,
       channels: channels.map((channel) => channel.name),
       channel_ids: channels.map((channel) => channel.id),
       capabilities: seed.capabilities ?? ["messages", "channels", "mcp"],
@@ -3677,6 +3688,10 @@ function syncMockRelayAgentsFromManagedAgents() {
       return {
         pubkey: agent.pubkey,
         name: agent.name,
+        owner_pubkey: MOCK_IDENTITY_PUBKEY,
+        persona_id: agent.persona_id,
+        codex_task: Boolean(agent.codex_task_binding),
+        managed_definition: true,
         agent_type: agent.agent_command,
         channels: memberships.channels,
         channel_ids: memberships.channelIds,

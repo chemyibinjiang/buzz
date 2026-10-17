@@ -58,3 +58,42 @@ test("ordinary persona-linked agents remain grouped", () => {
   assert.equal(result.groups[0].agents.length, 1);
   assert.equal(result.ungrouped.length, 0);
 });
+
+test("remote Codex task agents stay in Custom agents and hide the persona start card", () => {
+  const result = buildUnifiedGroups(
+    [persona],
+    [],
+    [
+      {
+        name: "Debug",
+        personaId: "debug-definition",
+        codexTask: true,
+        status: "online",
+      },
+    ],
+  );
+
+  assert.equal(result.groups.length, 0);
+  assert.equal(result.remoteCustomAgents.length, 1);
+  assert.equal(result.remoteCustomAgents[0].name, "Debug");
+});
+
+test("ordinary remote persona-linked agents remain grouped without becoming local instances", () => {
+  const result = buildUnifiedGroups(
+    [persona],
+    [],
+    [
+      {
+        name: "Remote Debug",
+        personaId: "debug-definition",
+        codexTask: false,
+        status: "online",
+      },
+    ],
+  );
+
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.groups[0].agents.length, 0);
+  assert.equal(result.groups[0].remoteAgents.length, 1);
+  assert.equal(result.remoteCustomAgents.length, 0);
+});

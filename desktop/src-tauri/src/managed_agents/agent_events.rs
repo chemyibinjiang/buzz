@@ -39,6 +39,14 @@ pub struct ManagedAgentEventContent {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_id: Option<String>,
+    /// Public origin marker for instances imported from a Codex task/thread.
+    ///
+    /// This deliberately carries no task id, workspace, app-server URL, SSH
+    /// configuration, or credentials. Other devices only need the boolean to
+    /// keep the remote identity in Custom agents and avoid offering a local
+    /// Start/Edit flow that would create a second, unbound instance.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub codex_task: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,6 +67,10 @@ pub struct ManagedAgentEventContent {
     pub respond_to_allowlist: Vec<String>,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Project a `ManagedAgentRecord` onto the content fields published in
 /// managed-agent events.
 ///
@@ -68,6 +80,17 @@ pub struct ManagedAgentEventContent {
 /// operational start/stop produces an identical projection and never
 /// republishes.
 pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventContent {
+    agent_event_content_with_origin(record, false)
+}
+
+/// Project a record with the device-local origin facts supplied explicitly.
+///
+/// Codex task bindings stay in their protected local sidecar store. Only the
+/// non-sensitive classification bit is added to the public projection.
+pub fn agent_event_content_with_origin(
+    record: &ManagedAgentRecord,
+    codex_task: bool,
+) -> ManagedAgentEventContent {
     // Slimmed projection (NIP-AP "Slimming: kind:30177"): definition-linked
     // instances resolve prompt/model/provider/source_version through their
     // kind:30175 definition, so those fields are omitted from the wire.
@@ -80,6 +103,7 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
     ManagedAgentEventContent {
         name: record.name.clone(),
         persona_id: record.persona_id.clone(),
+        codex_task,
         system_prompt: if definition_linked {
             None
         } else {
@@ -163,13 +187,22 @@ mod readiness_projection_tests {
 /// Returns an unsigned `EventBuilder` — the caller signs and submits. The
 /// `d_tag` is the agent's pubkey.
 pub fn build_agent_event(record: &ManagedAgentRecord) -> Result<EventBuilder, String> {
+    build_agent_event_with_origin(record, false)
+}
+
+/// Build a kind:30177 event while preserving the device-local Codex task
+/// classification as a non-sensitive public marker.
+pub fn build_agent_event_with_origin(
+    record: &ManagedAgentRecord,
+    codex_task: bool,
+) -> Result<EventBuilder, String> {
     super::validate_managed_agent_definition_text(
         &record.name,
         record.persona_id.as_deref(),
         record.system_prompt.as_deref(),
     )
     .map_err(|error| format!("Managed agent definition is unsafe to publish: {error}"))?;
-    let content = serde_json::to_string(&agent_event_content(record))
+    let content = serde_json::to_string(&agent_event_content_with_origin(record, codex_task))
         .map_err(|e| format!("failed to serialize managed-agent content: {e}"))?;
     let tags =
         vec![Tag::parse(["d", record.pubkey.as_str()]).map_err(|e| format!("invalid d-tag: {e}"))?];
@@ -412,6 +445,19 @@ mod tests {
             json.contains("persona_source_version"),
             "standalone keeps source_version"
         );
+    }
+
+    #[test]
+    fn codex_task_projection_publishes_only_the_origin_marker() {
+        let json =
+            serde_json::to_string(&agent_event_content_with_origin(&sample_agent(), true)).unwrap();
+
+        assert!(json.contains("\"codex_task\":true"));
+        assert!(!json.contains("task_id"));
+        assert!(!json.contains("workspace"));
+        assert!(!json.contains("app_server_url"));
+        assert!(!json.contains("ssh_host"));
+        assert!(!json.contains("identity_file"));
     }
 
     #[test]

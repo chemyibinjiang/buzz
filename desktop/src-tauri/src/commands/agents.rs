@@ -51,7 +51,9 @@ pub(super) fn retain_managed_agent_pending(
     state: &AppState,
     record: &ManagedAgentRecord,
 ) {
-    use crate::managed_agents::{reconcile::retain_agent_record, retention::open_retention_db};
+    use crate::managed_agents::{
+        reconcile::retain_agent_record_with_origin, retention::open_retention_db,
+    };
 
     let result = (|| -> Result<(), String> {
         let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
@@ -68,7 +70,10 @@ pub(super) fn retain_managed_agent_pending(
             || matches!(agent_readiness(&effective), AgentReadiness::Ready);
         let directory_record =
             crate::managed_agents::agent_events::directory_record_for_readiness(record, ready);
-        retain_agent_record(&conn, &scope.owner_keys, &directory_record).map(|_| ())
+        let codex_task =
+            crate::managed_agents::load_codex_task_binding(app, &record.pubkey)?.is_some();
+        retain_agent_record_with_origin(&conn, &scope.owner_keys, &directory_record, codex_task)
+            .map(|_| ())
     })();
     if let Err(e) = result {
         eprintln!("buzz-desktop: agent-retain: {e}");

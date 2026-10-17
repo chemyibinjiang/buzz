@@ -10,8 +10,8 @@ pub(crate) use agent_env::{
 };
 mod backend;
 mod codex_desktop;
-mod codex_tasks;
 mod codex_ssh;
+mod codex_tasks;
 pub(crate) mod config_bridge;
 pub(crate) mod custom_harnesses;
 mod definition_validation;
@@ -56,8 +56,8 @@ pub(crate) fn lock_path_mutex() -> std::sync::MutexGuard<'static, ()> {
 
 pub use backend::*;
 pub use codex_desktop::*;
-pub use codex_tasks::*;
 pub use codex_ssh::*;
+pub use codex_tasks::*;
 pub(crate) use definition_validation::{
     validate_agent_definition_text, validate_managed_agent_definition_text,
 };

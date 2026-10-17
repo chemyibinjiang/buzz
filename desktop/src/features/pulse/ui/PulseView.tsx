@@ -115,6 +115,9 @@ export function PulseView({ currentPubkey }: PulseViewProps) {
           respondToAllowlist: agent.respondToAllowlist,
           ownerPubkey: null,
           deleted: false,
+          personaId: agent.personaId,
+          codexTask: Boolean(agent.codexTaskBinding),
+          managedDefinition: false,
         });
       }
     }

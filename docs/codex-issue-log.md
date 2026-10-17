@@ -461,3 +461,11 @@
 - 处理：将 Focus Thread 改为独立的长文 Markdown 主题，以 16px/28px 正文为基准统一标题层级、段落节奏、列表缩进与嵌套间距、混合任务列表、非斜体引用块、蓝色文档链接、代码块、行内代码、KaTeX 行间公式、分隔线、媒体和无卡片表格。Markdown 组件现在保留 GFM 的 `className`、表格对齐等语义属性，并为标题、段落、列表、引用和分隔线提供稳定标记；普通频道、Inbox 和并排 Thread 继续使用原紧凑样式。
 - 验证：新增一条包含长段落、H1/H2/H3、嵌套列表、已完成/未完成任务、引用、外链、TypeScript 代码块、行内/行间公式、分隔线、行内代码和四列表格的 Focus Thread E2E 场景；断言字号与行距、标题权重、段落间距、任务列表语义、引用样式、代码块、公式横向滚动、链接识别、表格固定布局及无横向溢出，并生成上下两张实际界面截图。Desktop TypeScript、Biome、文本字号门禁和 E2E build 通过，Focus Thread Playwright 3/3 通过。
 - 版本/提交：Buzz Codex Lab `0.5.19`，随本条修复提交至 `Lin/develop`。
+
+## 2026-10-17：同一账户跨电脑 Agent 不同步且远端 Codex task 被误判为本机待配置 Agent
+
+- 现象：同一 Buzz 账户在两台电脑的 Agents 页面内容不一致。Codex thread/task 导入的 Agent 在创建电脑上位于 Custom agents，另一台电脑却只显示同步到 Relay 的 Persona，并被混入普通 Agent 区；从另一台电脑点击 Start 或发送消息后出现 `needs configuration / Set the provider field`，用户也缺少主动刷新同账户 Agent 的入口。
+- 诊断：Persona(kind:30175) 和 Managed Agent 的公开投影(kind:30177)已有跨设备同步，但 Codex task binding（task id、workspace、app-server/SSH 信息）按安全设计只保存在本机。30177 又没有携带“源自 Codex task”的非敏感分类标记，另一台电脑只能看到 persona link，于是把定义渲染成可在本机启动的 Persona 卡；启动后自然进入本机 readiness/setup-listener，并错误要求配置本机 Provider。直接复制 ManagedAgent、私钥或 Provider/API Key 会破坏设备边界并泄露敏感信息，因此不能用“完整配置同步”解决。
+- 处理：kind:30177 增加向后兼容的 `codex_task` 布尔来源标记，boot reconcile 与交互保存从本机 binding sidecar 读取该事实，但不发布 task id、目录、app-server、SSH 或凭据。Relay Agent 目录同时暴露可信的 `persona_id`、`codex_task` 和 `managed_definition`。Agents 页面把同 owner、已验证且仅存在于另一设备的 Managed Agent 作为独立 Remote 卡片展示；Codex task Remote 卡始终进入 Custom agents，不提供本机 Start/Edit，只打开 Agent profile/消息入口；若旧版本曾基于同一 persona 误建本机副本，远端 task 投影会优先隐藏该错误启动入口。页面新增 `Sync agents`，主动拉取并落地当前账户的 persona/team/managed-agent heads 后刷新本机、Relay 和 Persona 查询，而非仅刷新缓存。
+- 验证：前端分组与 Persona sync 聚焦测试 8/8 通过，覆盖远端 Codex task 固定进入 Custom agents、普通远端 persona 保持分组且不成为本机实例，以及手动同步会等待全部 owner 事件完成落地；Rust 聚焦测试验证仅公开 `codex_task` 标记而不泄漏 task/workspace/app-server/SSH 字段，以及 Relay 目录正确返回 Codex 来源与 persona。Desktop TypeScript、Biome、`check:px-text`、Rustfmt、Tauri 编译和两个 Tauri 聚焦测试通过；新增 Playwright 回归确认同账户远端 Codex task 显示在 Custom agents、显示 Remote online、没有本机 Start 控件和重复 Persona 启动卡。Tauri 编译仅有仓库既有 unused 警告。
+- 版本/提交：Buzz Codex Lab `0.5.20` 后续工作区，`Lin/develop`，待提交。

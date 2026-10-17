@@ -18,10 +18,10 @@
 //!   `managed-agents.json.invalid` (see [`super::storage::backup_invalid_store`])
 //!   and an error is returned, never silently skipped.
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use super::{
-    agent_events::{build_agent_event, directory_record_for_readiness},
+    agent_events::{build_agent_event_with_origin, directory_record_for_readiness},
     persona_events::monotonic_created_at,
     retention::{get_retained_event, open_retention_db, retain_event, RetainedEvent},
     ManagedAgentRecord,
@@ -43,7 +43,14 @@ pub(crate) fn reconcile_agents_to_events(
 
     let personas = super::load_personas(app).unwrap_or_default();
     let global = super::load_global_agent_config(app).unwrap_or_default();
-    match reconcile_agents_in_dir_at(&base_dir, keys, db_path, Some((&personas, &global))) {
+    let codex_task_pubkeys = super::load_codex_task_bound_agent_pubkeys(app).unwrap_or_default();
+    match reconcile_agents_in_dir_at(
+        &base_dir,
+        keys,
+        db_path,
+        Some((&personas, &global)),
+        &codex_task_pubkeys,
+    ) {
         Ok(0) => {}
         Ok(reconciled) => {
             eprintln!(
@@ -69,7 +76,13 @@ pub(crate) fn reconcile_agents_to_events(
 /// Returns the number of agents (re)written to the retention store.
 #[cfg(test)]
 pub(crate) fn reconcile_agents_in_dir(base_dir: &Path, keys: &nostr::Keys) -> Result<u32, String> {
-    reconcile_agents_in_dir_at(base_dir, keys, &base_dir.join("retention.db"), None)
+    reconcile_agents_in_dir_at(
+        base_dir,
+        keys,
+        &base_dir.join("retention.db"),
+        None,
+        &HashSet::new(),
+    )
 }
 
 fn reconcile_agents_in_dir_at(
@@ -77,6 +90,7 @@ fn reconcile_agents_in_dir_at(
     keys: &nostr::Keys,
     db_path: &Path,
     readiness_inputs: Option<(&[super::AgentDefinition], &super::GlobalAgentConfig)>,
+    codex_task_pubkeys: &HashSet<String>,
 ) -> Result<u32, String> {
     let store_path = base_dir.join("managed-agents.json");
     if !store_path.exists() {
@@ -120,7 +134,12 @@ fn reconcile_agents_in_dir_at(
         } else {
             record.clone()
         };
-        if retain_agent_record(&conn, keys, &projected)? {
+        if retain_agent_record_with_origin(
+            &conn,
+            keys,
+            &projected,
+            codex_task_pubkeys.contains(&record.pubkey),
+        )? {
             reconciled += 1;
         }
     }
@@ -138,10 +157,20 @@ fn reconcile_agents_in_dir_at(
 /// (`retain_managed_agent_pending`, persona-rename propagation). Every
 /// mutation of an agent's published identity must go through it so the
 /// retained record can never silently drift from `managed-agents.json`.
+#[cfg(test)]
 pub(crate) fn retain_agent_record(
     conn: &rusqlite::Connection,
     keys: &nostr::Keys,
     record: &ManagedAgentRecord,
+) -> Result<bool, String> {
+    retain_agent_record_with_origin(conn, keys, record, false)
+}
+
+pub(crate) fn retain_agent_record_with_origin(
+    conn: &rusqlite::Connection,
+    keys: &nostr::Keys,
+    record: &ManagedAgentRecord,
+    codex_task: bool,
 ) -> Result<bool, String> {
     let owner_pubkey = keys.public_key().to_hex();
     let existing = get_retained_event(conn, KIND_MANAGED_AGENT, &owner_pubkey, &record.pubkey)?;
@@ -153,7 +182,7 @@ pub(crate) fn retain_agent_record(
     // it serializes — republishing every agent every boot. Content is
     // timestamp-independent, so the monotonic bump below never forces a
     // spurious republish; an unchanged agent is still a true no-op.
-    let event = build_agent_event(record)?
+    let event = build_agent_event_with_origin(record, codex_task)?
         .custom_created_at(monotonic_created_at(
             existing.as_ref().map(|row| row.created_at),
         ))

@@ -46,15 +46,9 @@ export function startPersonaSync(
 
   // One-shot backfill of existing heads + tombstones (closes the fresh-start
   // gap that live-only subscription + reconnect-replay cannot recover).
-  void relayClient
-    .fetchEvents({ kinds: PERSONA_SYNC_KINDS, authors: [pubkey], limit: 500 })
-    .then((events) => {
-      if (onCancelled()) return;
-      for (const event of events) reconcile(event);
-    })
-    .catch((error) => {
-      console.warn("[usePersonaSync] backfill failed:", error);
-    });
+  void syncPersonaHeads(pubkey, relayUrl, onCancelled).catch((error) => {
+    console.warn("[usePersonaSync] backfill failed:", error);
+  });
 
   let unsub: (() => Promise<void>) | null = null;
   void relayClient
@@ -73,6 +67,32 @@ export function startPersonaSync(
   return async () => {
     if (unsub) await unsub();
   };
+}
+
+/**
+ * Fetch and apply the current owner-authored persona/team/agent heads now.
+ * Used both by startup sync and the explicit Agents-page "Sync agents"
+ * action, so the button performs a real relay-to-local reconciliation rather
+ * than merely refreshing cached UI queries.
+ */
+export async function syncPersonaHeads(
+  pubkey: string,
+  relayUrl: string,
+  onCancelled: () => boolean = () => false,
+): Promise<number> {
+  const events = await relayClient.fetchEvents({
+    kinds: PERSONA_SYNC_KINDS,
+    authors: [pubkey],
+    limit: 500,
+  });
+  let applied = 0;
+  for (const event of events) {
+    if (onCancelled()) break;
+    if (event.pubkey !== pubkey) continue;
+    await reconcileInboundPersonaEvent(JSON.stringify(event), relayUrl);
+    applied += 1;
+  }
+  return applied;
 }
 
 // Subscribes to this device's own persona/team/agent projection + deletion

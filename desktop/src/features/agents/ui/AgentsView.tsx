@@ -4,6 +4,7 @@ import {
   Link2,
   MonitorUp,
   OctagonX,
+  RefreshCw,
   Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,6 +35,10 @@ import { usePersonaActions } from "./usePersonaActions";
 import { useTeamActions } from "./useTeamActions";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { normalizePubkey } from "@/shared/lib/pubkey";
+import { useCommunities } from "@/features/communities/useCommunities";
+import { syncPersonaHeads } from "@/features/agents/lib/usePersonaSync";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import {
@@ -56,6 +61,8 @@ import { getInheritedAgentDefaults } from "./bakedEnvHelpers";
 
 export function AgentsView() {
   const { openPersonaProfilePanel, openProfilePanel } = useProfilePanel();
+  const identityQuery = useIdentityQuery();
+  const { activeCommunity } = useCommunities();
   const { globalConfig } = useGlobalAgentConfig();
   const { data: bakedEnv } = useBakedBuildEnvQuery({ enabled: true });
   const inheritedDefaults = getInheritedAgentDefaults(globalConfig, bakedEnv);
@@ -69,6 +76,57 @@ export function AgentsView() {
   const [isCodexTaskOpen, setIsCodexTaskOpen] = React.useState(false);
   const [isCodexRuntimeOpen, setIsCodexRuntimeOpen] = React.useState(false);
   const [isOpeningCodex, setIsOpeningCodex] = React.useState(false);
+  const [isSyncingAgents, setIsSyncingAgents] = React.useState(false);
+
+  const currentOwnerPubkey = identityQuery.data?.pubkey
+    ? normalizePubkey(identityQuery.data.pubkey)
+    : null;
+  const ownedRemoteAgents = React.useMemo(() => {
+    if (!currentOwnerPubkey) return [];
+    const localByPubkey = new Map(
+      agents.managedAgents.map((agent) => [
+        normalizePubkey(agent.pubkey),
+        agent,
+      ]),
+    );
+    return (agents.relayAgentsQuery.data ?? []).filter((agent) => {
+      if (
+        agent.deleted ||
+        !agent.managedDefinition ||
+        !agent.ownerPubkey ||
+        normalizePubkey(agent.ownerPubkey) !== currentOwnerPubkey
+      ) {
+        return false;
+      }
+      const local = localByPubkey.get(normalizePubkey(agent.pubkey));
+      return !local || (agent.codexTask && !local.codexTaskBinding);
+    });
+  }, [agents.managedAgents, agents.relayAgentsQuery.data, currentOwnerPubkey]);
+  const remoteTaskPersonaIds = React.useMemo(
+    () =>
+      new Set(
+        ownedRemoteAgents.flatMap((agent) =>
+          agent.codexTask && agent.personaId ? [agent.personaId] : [],
+        ),
+      ),
+    [ownedRemoteAgents],
+  );
+  const remotelyControlledPubkeys = React.useMemo(
+    () =>
+      new Set(ownedRemoteAgents.map((agent) => normalizePubkey(agent.pubkey))),
+    [ownedRemoteAgents],
+  );
+  const visibleLocalAgents = React.useMemo(
+    () =>
+      agents.managedAgents.filter((agent) => {
+        if (agent.codexTaskBinding) return true;
+        if (remotelyControlledPubkeys.has(normalizePubkey(agent.pubkey))) {
+          return false;
+        }
+        return !(agent.personaId && remoteTaskPersonaIds.has(agent.personaId));
+      }),
+    [agents.managedAgents, remoteTaskPersonaIds, remotelyControlledPubkeys],
+  );
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -101,6 +159,54 @@ export function AgentsView() {
       });
     } finally {
       setIsOpeningCodex(false);
+    }
+  }
+
+  async function syncAgents() {
+    setIsSyncingAgents(true);
+    try {
+      if (!identityQuery.data?.pubkey || !activeCommunity?.relayUrl) {
+        throw new Error("The active account or community is not ready yet.");
+      }
+      await syncPersonaHeads(
+        identityQuery.data.pubkey,
+        activeCommunity.relayUrl,
+      );
+      const [relayResult, managedResult, personaResult] = await Promise.all([
+        agents.relayAgentsQuery.refetch(),
+        agents.managedAgentsQuery.refetch(),
+        personas.personasQuery.refetch(),
+      ]);
+      const error =
+        relayResult.error ?? managedResult.error ?? personaResult.error;
+      if (error) throw error;
+
+      const localPubkeys = new Set(
+        (managedResult.data ?? []).map((agent) =>
+          normalizePubkey(agent.pubkey),
+        ),
+      );
+      const remoteCount = (relayResult.data ?? []).filter(
+        (agent) =>
+          !agent.deleted &&
+          agent.managedDefinition &&
+          Boolean(agent.ownerPubkey) &&
+          currentOwnerPubkey !== null &&
+          normalizePubkey(agent.ownerPubkey ?? "") === currentOwnerPubkey &&
+          !localPubkeys.has(normalizePubkey(agent.pubkey)),
+      ).length;
+      toast.success("Agents synced", {
+        description:
+          remoteCount > 0
+            ? `${remoteCount} agent${remoteCount === 1 ? "" : "s"} found on other computers.`
+            : "This computer already has the latest agent list.",
+      });
+    } catch (cause) {
+      toast.error("Could not sync agents", {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+    } finally {
+      setIsSyncingAgents(false);
     }
   }
 
@@ -182,6 +288,18 @@ export function AgentsView() {
               <>
                 <div className="flex flex-wrap justify-end gap-2 [@container(max-width:40rem)]:hidden">
                   <Button
+                    data-testid="sync-agents-button"
+                    disabled={isSyncingAgents}
+                    onClick={() => void syncAgents()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <RefreshCw
+                      className={isSyncingAgents ? "animate-spin" : undefined}
+                    />
+                    {isSyncingAgents ? "Syncing..." : "Sync agents"}
+                  </Button>
+                  <Button
                     onClick={() => setIsCodexTaskOpen(true)}
                     size="sm"
                     variant="outline"
@@ -241,6 +359,15 @@ export function AgentsView() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      disabled={isSyncingAgents}
+                      onSelect={() => void syncAgents()}
+                    >
+                      <RefreshCw
+                        className={isSyncingAgents ? "animate-spin" : undefined}
+                      />
+                      {isSyncingAgents ? "Syncing..." : "Sync agents"}
+                    </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setIsCodexTaskOpen(true)}>
                       <Link2 />
                       Add Codex task
@@ -285,14 +412,18 @@ export function AgentsView() {
               defaultModel={inheritedDefaults.model.value}
               actionErrorMessage={agents.actionErrorMessage}
               actionNoticeMessage={agents.actionNoticeMessage}
-              agents={agents.managedAgents}
+              agents={visibleLocalAgents}
+              remoteAgents={ownedRemoteAgents}
               agentsError={
                 agents.managedAgentsQuery.error instanceof Error
                   ? agents.managedAgentsQuery.error
                   : null
               }
               isActionPending={isActionPending}
-              isAgentsLoading={agents.managedAgentsQuery.isLoading}
+              isAgentsLoading={
+                agents.managedAgentsQuery.isLoading ||
+                agents.relayAgentsQuery.isLoading
+              }
               startingAgentPubkey={agents.startingAgentPubkey}
               restartingAgentPubkey={agents.restartingAgentPubkey}
               startingPersonaIds={agents.startingPersonaIds}

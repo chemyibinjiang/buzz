@@ -39,9 +39,13 @@ pub(crate) fn relay_agents_from_events(
     for event in events.iter().filter(|event| event.kind.as_u16() == 5) {
         for tag in event.tags.iter() {
             let values = tag.as_slice();
-            let Some(coordinate) = values.get(1) else { continue };
+            let Some(coordinate) = values.get(1) else {
+                continue;
+            };
             let mut parts = coordinate.split(':');
-            if parts.next() != Some("30177") { continue; }
+            if parts.next() != Some("30177") {
+                continue;
+            }
             let Some(owner) = parts.next() else { continue };
             let Some(agent) = parts.next() else { continue };
             if agent.len() == 64
@@ -76,6 +80,13 @@ pub(crate) fn relay_agents_from_events(
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default();
+    for agent in &mut agents {
+        // kind:10100 alone is a self-authored runtime profile, not proof that
+        // this owner has a synchronized managed-instance definition.
+        agent.persona_id = None;
+        agent.codex_task = false;
+        agent.managed_definition = false;
+    }
     let mut agent_indexes: HashMap<String, usize> = agents
         .iter()
         .enumerate()
@@ -155,6 +166,9 @@ pub(crate) fn relay_agents_from_events(
             if !content.name.trim().is_empty() {
                 agent.name = content.name;
             }
+            agent.persona_id = content.persona_id;
+            agent.codex_task = content.codex_task;
+            agent.managed_definition = true;
             agent.respond_to = Some(content.respond_to);
             agent.respond_to_allowlist = content.respond_to_allowlist;
             continue;
@@ -164,8 +178,14 @@ pub(crate) fn relay_agents_from_events(
         agents.push(RelayAgentInfo {
             pubkey: pubkey.clone(),
             name: content.name,
-            owner_pubkey: verified_owners.get(&pubkey).cloned().or_else(|| deleted.get(&pubkey).cloned()),
+            owner_pubkey: verified_owners
+                .get(&pubkey)
+                .cloned()
+                .or_else(|| deleted.get(&pubkey).cloned()),
             deleted: deleted.contains_key(&pubkey),
+            persona_id: content.persona_id,
+            codex_task: content.codex_task,
+            managed_definition: true,
             agent_type: "agent".to_string(),
             channels: Vec::new(),
             channel_ids: Vec::new(),
@@ -180,7 +200,9 @@ pub(crate) fn relay_agents_from_events(
     // refresh. Keep a useful historical row so a newly-created same-name agent
     // cannot be confused with the retired identity.
     for (pubkey, owner) in deleted {
-        if agent_indexes.contains_key(&pubkey) { continue; }
+        if agent_indexes.contains_key(&pubkey) {
+            continue;
+        }
         let name = agents
             .iter()
             .find(|agent| agent.pubkey.eq_ignore_ascii_case(&pubkey))
@@ -193,6 +215,9 @@ pub(crate) fn relay_agents_from_events(
             name,
             owner_pubkey: (!owner.is_empty()).then_some(owner),
             deleted: true,
+            persona_id: None,
+            codex_task: false,
+            managed_definition: false,
             agent_type: "agent".to_string(),
             channels: Vec::new(),
             channel_ids: Vec::new(),
@@ -256,10 +281,32 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].pubkey, agent_pubkey);
         assert_eq!(agents[0].name, "Remote Scout");
+        assert!(agents[0].managed_definition);
+        assert!(!agents[0].codex_task);
         assert_eq!(
             agents[0].respond_to,
             Some(crate::managed_agents::RespondTo::Anyone)
         );
+    }
+
+    #[test]
+    fn exposes_codex_task_origin_and_persona_for_owner_devices() {
+        let agent_keys = Keys::generate();
+        let owner_keys = Keys::generate();
+        let agent_pubkey = agent_keys.public_key().to_hex();
+        let identity_profile = oa_profile_event_for(&agent_keys, &owner_keys, "{}");
+        let managed = managed_agent_event(
+            &agent_pubkey,
+            &owner_keys,
+            r#"{"name":"Task agent","persona_id":"persona-task","codex_task":true,"parallelism":1,"respond_to":"owner-only"}"#,
+        );
+
+        let agents = relay_agents_from_events(&[managed], &[identity_profile]);
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].persona_id.as_deref(), Some("persona-task"));
+        assert!(agents[0].codex_task);
+        assert!(agents[0].managed_definition);
     }
 
     #[test]
@@ -316,10 +363,13 @@ mod tests {
         let owner_keys = Keys::generate();
         let agent_pubkey = agent_keys.public_key().to_hex();
         let owner_pubkey = owner_keys.public_key().to_hex();
-        let identity_profile = oa_profile_event_for(&agent_keys, &owner_keys, r#"{"name":"Old Debug"}"#);
+        let identity_profile =
+            oa_profile_event_for(&agent_keys, &owner_keys, r#"{"name":"Old Debug"}"#);
         let coordinate = format!("30177:{owner_pubkey}:{agent_pubkey}");
         let deletion = EventBuilder::new(Kind::Custom(5), "")
-            .tags(vec![Tag::parse(["a", coordinate.as_str()]).expect("parse coordinate")])
+            .tags(vec![
+                Tag::parse(["a", coordinate.as_str()]).expect("parse coordinate")
+            ])
             .sign_with_keys(&owner_keys)
             .expect("sign deletion");
 
@@ -327,7 +377,10 @@ mod tests {
 
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].name, "Old Debug");
-        assert_eq!(agents[0].owner_pubkey.as_deref(), Some(owner_pubkey.as_str()));
+        assert_eq!(
+            agents[0].owner_pubkey.as_deref(),
+            Some(owner_pubkey.as_str())
+        );
         assert!(agents[0].deleted);
     }
 }

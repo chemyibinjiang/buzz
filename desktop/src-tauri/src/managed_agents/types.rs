@@ -202,6 +202,19 @@ pub struct RelayAgentInfo {
     pub owner_pubkey: Option<String>,
     #[serde(default)]
     pub deleted: bool,
+    /// Persona/definition linked to the managed instance, when published by
+    /// its verified owner.
+    #[serde(default)]
+    pub persona_id: Option<String>,
+    /// Non-sensitive origin marker used by other owner devices to keep Codex
+    /// task instances in Custom agents without copying the local task binding.
+    #[serde(default)]
+    pub codex_task: bool,
+    /// True only when a verified owner-authored kind:30177 record backed this
+    /// directory row. Consumers use it to avoid treating an arbitrary owned
+    /// profile as a synchronized managed instance.
+    #[serde(default)]
+    pub managed_definition: bool,
     pub agent_type: String,
     pub channels: Vec<String>,
     #[serde(default)]
