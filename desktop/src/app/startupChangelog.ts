@@ -8,6 +8,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const STARTUP_CHANGELOG: StartupChangelogEntry[] = [
   {
+    date: "2026-10-17",
+    items: [
+      "【主要更新】频道与私聊中的 Agent 现在支持定时任务和 Heartbeat，可按本地时区设置每日、工作日、每周或自定义周期。",
+      "定时任务可在会话中查看、停止和删除，并标明任务来源；Agent 间委派的结果会正确交付到频道或私聊。",
+      "修复 Workflow 删除不完整的问题，并自动清理旧版本遗留的孤立任务定义。",
+      "【主要更新】Focus Thread 升级为 ChatGPT 风格的长文 Markdown 阅读布局，统一优化标题、段落、列表、引用、链接、代码、公式与科研表格。",
+      "Focus Thread 阅读宽度可通过按钮或拖动调整并持久保存；普通频道、Inbox 和并排 Thread 继续保持紧凑布局。",
+    ],
+  },
+  {
     date: "2026-09-07",
     items: [
       "【主要更新】修复孤立 Codex task Agent 定义在启动后重新出现的问题，并自动清理旧版本遗留记录。",
