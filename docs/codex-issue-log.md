@@ -366,6 +366,14 @@
 - 验证：Relay `workflow_sink` 聚焦单元测试 18/18 通过，`cargo check -p buzz-relay` 通过；新增 Postgres 回归用例覆盖“频道成员存在但 owner 注册为空”的 Desktop-managed Agent（本地无 Postgres，按约定保持 ignored）。Desktop 定时任务 helper 测试 8/8、TypeScript typecheck、目标文件 Biome 检查，以及 E2E 弹窗测试 3/3 均通过；E2E 覆盖创建任务后进入 Workflow 查看页。真实 Relay 数据库与日志已确认修复前任务按期产生 run、失败原因统一为错误的 Agent 注册门槛。
 - 版本/提交：Buzz Codex Lab `0.5.19`，随本条修复提交至 `Lin/develop`。
 
+## 2026-10-17：发布 Buzz Codex Lab 0.5.20 正式版
+
+- 现象：需要将 `0.5.19` 之后完成的 Agent 定时任务、Workflow 清理和 Focus Thread Markdown 阅读体验更新写入用户可见日志，并发布为正式版本 `0.5.20`。
+- 定位：`Lin/develop` 已包含频道/私聊 Agent 定时任务与 Heartbeat、任务查看/停止/删除及跨 Agent 交付修复、孤立 Workflow 定义清理、Focus Thread 可调宽度和完整文档型 Markdown 主题；发布前桌面版本源仍为 `0.5.19`，应用内更新日志尚未包含这些内容。
+- 处理：将桌面端四处版本源统一更新为 `0.5.20`，补充应用内最近十日更新日志和仓库 Changelog；使用本地 updater 私钥、DPAPI 密码及 `D:\BuzzCodexLabBuild-current-provider` 增量缓存生成签名 updater 安装包。创建并推送 `buzz-codex-lab-v0.5.20`，发布非 draft、非 pre-release 的正式 GitHub Release，并将 `buzz-codex-lab-latest` 的安装包、签名和 `latest.json` 更新到 `0.5.20`。滚动通道按约定仅保留当前 `0.5.20` 与前一正式版 `0.5.19` 的安装包及签名。
+- 验证：更新日志测试 3/3、Desktop TypeScript、Biome、文本字号门禁及 diff 检查通过；缓存构建完成 Windows NSIS 安装包，updater 公钥验签通过。安装包 SHA-256 为 `0F44DA152B730814C93483A1D76F9E791F46C4150661C183AE0B9826A841214A`；GitHub 回读确认版本化 Release `isDraft=false`、`isPrerelease=false`、目标提交为 `45a5bb43746eadba83d3f87d11855b6694e84bf9`，在线 `latest.json` 返回版本 `0.5.20` 并指向对应安装包。
+- 版本/提交：Buzz Codex Lab `0.5.20`；发布准备提交 `45a5bb43`；正式 Release：`https://github.com/chemyibinjiang/buzz/releases/tag/buzz-codex-lab-v0.5.20`。
+
 ## 2026-10-14：Heartbeat 已保存并执行，但未出现在 Workflow 总列表
 
 - 现象：用户从聊天内成功创建 Heartbeat 后，在 Workflow 总列表中看不到该任务。
