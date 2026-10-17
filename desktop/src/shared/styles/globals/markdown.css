@@ -16,44 +16,189 @@
   display: none;
 }
 
-/* Focus threads are the long-form reading surface. Keep the normal timeline
-   compact, but give reports, evidence matrices, and other dense Agent output
-   the same open hierarchy as a document reader. The named class lives on the
-   Markdown root so table styling cannot leak into Inbox previews or split
-   threads. */
+/* Focus threads are Buzz's long-form Markdown reader. The normal channel and
+   split-thread timeline intentionally stay compact; this named root applies a
+   coherent document rhythm to every Markdown primitive instead of tuning one
+   output shape (for example, evidence tables) in isolation. */
 .message-markdown.thread-focus-markdown {
+  --inline-code-font-size: var(--text-sm);
   color: hsl(var(--foreground) / 0.94);
+  font-size: var(--text-base);
+  line-height: 1.75;
   text-wrap: pretty;
+}
+
+.message-markdown.thread-focus-markdown > :first-child {
+  margin-top: 0;
+}
+
+.message-markdown.thread-focus-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown.thread-focus-markdown > * + * {
+  margin-top: 1.25rem;
+}
+
+.message-markdown.thread-focus-markdown
+  > [data-markdown-paragraph]
+  + [data-markdown-paragraph] {
+  margin-top: 0.875rem;
+}
+
+.message-markdown.thread-focus-markdown > * + [data-markdown-heading] {
+  margin-top: 2rem;
+}
+
+.message-markdown.thread-focus-markdown > [data-markdown-heading] + * {
+  margin-top: 0.75rem;
+}
+
+.message-markdown.thread-focus-markdown
+  > [data-markdown-heading]
+  + [data-markdown-heading] {
+  margin-top: 1rem;
 }
 
 .message-markdown.thread-focus-markdown h1 {
   font-size: var(--text-2xl);
   line-height: var(--text-2xl--line-height);
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 
 .message-markdown.thread-focus-markdown h2 {
   font-size: var(--text-xl);
   line-height: var(--text-xl--line-height);
+  font-weight: 650;
+  letter-spacing: -0.015em;
 }
 
 .message-markdown.thread-focus-markdown h3 {
   font-size: var(--text-lg);
   line-height: var(--text-lg--line-height);
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .message-markdown.thread-focus-markdown h4,
 .message-markdown.thread-focus-markdown h5 {
   font-size: var(--text-base);
   line-height: var(--text-base--line-height);
+  font-weight: 650;
+}
+
+.message-markdown.thread-focus-markdown h6 {
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: 600;
 }
 
 .message-markdown.thread-focus-markdown strong {
   font-weight: 650;
 }
 
+.message-markdown.thread-focus-markdown a {
+  color: #2563eb;
+  text-decoration-line: none;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 0.08em;
+}
+
+.dark .message-markdown.thread-focus-markdown a {
+  color: #60a5fa;
+}
+
+.message-markdown.thread-focus-markdown a:hover {
+  text-decoration-line: underline;
+}
+
+.message-markdown.thread-focus-markdown del {
+  color: hsl(var(--muted-foreground) / 0.82);
+  text-decoration-thickness: 0.08em;
+}
+
 .message-markdown.thread-focus-markdown ul,
 .message-markdown.thread-focus-markdown ol {
+  display: grid;
+  row-gap: 0.5rem;
+  padding-left: 1.625rem;
+}
+
+.message-markdown.thread-focus-markdown :is(ul, ol) :is(ul, ol) {
+  margin-top: 0.5rem;
   row-gap: 0.375rem;
+}
+
+.message-markdown.thread-focus-markdown li::marker {
+  color: hsl(var(--foreground) / 0.62);
+  font-weight: 550;
+}
+
+.message-markdown.thread-focus-markdown li > p + p {
+  display: block;
+  margin-top: 0.5rem;
+}
+
+.message-markdown.thread-focus-markdown .contains-task-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.message-markdown.thread-focus-markdown
+  .contains-task-list
+  > li:not(.task-list-item) {
+  margin-left: 1.625rem;
+  list-style: disc;
+}
+
+.message-markdown.thread-focus-markdown .task-list-item {
+  display: grid;
+  grid-template-columns: 1.125rem minmax(0, 1fr);
+  column-gap: 0.625rem;
+  align-items: start;
+}
+
+.message-markdown.thread-focus-markdown
+  .task-list-item
+  > input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.375rem;
+  accent-color: hsl(var(--primary));
+}
+
+.message-markdown.thread-focus-markdown [data-markdown-blockquote] {
+  border-left-color: hsl(var(--foreground) / 0.22);
+  border-left-width: 0.1875rem;
+  border-radius: 0.25rem;
+  background: hsl(var(--muted) / 0.38);
+  padding: 0.75rem 1rem;
+  color: hsl(var(--foreground) / 0.78);
+  font-style: normal;
+}
+
+.message-markdown.thread-focus-markdown [data-markdown-blockquote] > * + * {
+  margin-top: 0.625rem;
+}
+
+.message-markdown.thread-focus-markdown [data-markdown-rule] {
+  border-color: hsl(var(--border) / 0.72);
+}
+
+.message-markdown.thread-focus-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 1.5rem 0;
+  padding: 0.25rem 0.125rem;
+}
+
+.message-markdown.thread-focus-markdown .katex-display > .katex {
+  font-size: 1.08em;
+}
+
+.message-markdown.thread-focus-markdown [data-block-media] {
+  margin-top: 0.25rem;
 }
 
 /* ChatGPT-style evidence tables: the content, not a card-shaped container,
@@ -64,10 +209,11 @@
 .message-markdown.thread-focus-markdown [data-table-block] {
   border: 0;
   border-radius: 0;
+  scrollbar-width: thin;
 }
 
 .message-markdown.thread-focus-markdown [data-table-block] table {
-  width: 100% !important;
+  width: 100%;
   min-width: 100%;
   max-width: 100%;
   table-layout: fixed;
@@ -108,10 +254,7 @@
   border-bottom: 1px solid hsl(var(--border) / 0.48);
 }
 
-.message-markdown.thread-focus-markdown
-  [data-table-block]
-  tbody
-  tr:last-child {
+.message-markdown.thread-focus-markdown [data-table-block] tbody tr:last-child {
   border-bottom-color: transparent;
 }
 
@@ -121,6 +264,7 @@
   padding: 0.75rem 1.5rem 0.75rem 0;
   vertical-align: bottom;
   white-space: normal;
+  line-height: 1.5;
 }
 
 .message-markdown.thread-focus-markdown [data-table-block] td {
@@ -132,8 +276,19 @@
 
 .message-markdown.thread-focus-markdown
   [data-table-block]
-  td
-  :is(a, code) {
+  :is(th, td)
+  > :first-child {
+  margin-top: 0;
+}
+
+.message-markdown.thread-focus-markdown
+  [data-table-block]
+  :is(th, td)
+  > :last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown.thread-focus-markdown [data-table-block] td :is(a, code) {
   max-width: 100%;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -398,4 +553,32 @@
 
 .dark .code-line-diff-remove {
   background-color: hsl(0 60% 50% / 0.12);
+}
+
+/* Focus-reader code overrides stay below every shared inline/code rule so the
+   compact timeline remains the base layer and the cascade stays predictable. */
+.message-markdown.thread-focus-markdown [data-code-block] {
+  margin-inline: 0;
+}
+
+.message-markdown.thread-focus-markdown [data-code-block] pre {
+  max-height: 36rem;
+  border-color: hsl(var(--border) / 0.72);
+  border-radius: 0.75rem;
+  background: hsl(var(--muted) / 0.52);
+  padding: 1rem 1.25rem;
+  box-shadow: none;
+}
+
+.message-markdown.thread-focus-markdown [data-code-block] code {
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  font-weight: 450;
+}
+
+.message-markdown.thread-focus-markdown .inline-code-chip,
+.message-markdown.thread-focus-markdown :not(pre) > code {
+  border-radius: 0.375rem;
+  background: hsl(var(--muted) / 0.78);
+  font-weight: 500;
 }

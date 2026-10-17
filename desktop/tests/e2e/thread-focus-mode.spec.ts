@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
 
 async function seedLongThread(page: import("@playwright/test").Page) {
@@ -37,6 +38,74 @@ async function seedLongThread(page: import("@playwright/test").Page) {
     }
     return root.id;
   });
+}
+
+const DOCUMENT_MARKDOWN = [
+  "# Evidence review",
+  "",
+  "The expanded evidence keeps the **reasoning chain visible** instead of compressing every result into one paragraph. Open the [source index](https://example.com/evidence) for the full record.",
+  "",
+  "A second paragraph verifies that long-form prose uses a readable document rhythm rather than compact chat spacing.",
+  "",
+  "## What changed",
+  "",
+  "- Evidence stays attached to each conclusion.",
+  "- Review remains scannable:",
+  "  - claims use clear hierarchy;",
+  "  - caveats remain visible.",
+  "- [x] Preserve completed checks",
+  "- [ ] Flag unresolved assumptions",
+  "",
+  "> Treat the table as evidence, not decoration. The layout should keep the qualifier beside the claim.",
+  "",
+  "### Evidence matrix",
+  "",
+  "| Literature / comparison | Method and observed data | What it supports | What it cannot prove |",
+  "| --- | --- | --- | --- |",
+  "| **Yang, 2012** | TEM + UV-Vis across three addition times | **An early-time window matters** | The active silver species was not measured directly |",
+  "| **Tong, 2017** | Distribution fits at 10 and 20 minutes | Timing changes the width population | Fitted groups are not single-particle trajectories |",
+  "",
+  "### Reproducible check",
+  "",
+  "```ts",
+  "const aspectRatio = length / width;",
+  "console.log({ aspectRatio });",
+  "```",
+  "",
+  "The normalized score is $s = x / x_{max}$, with the display form:",
+  "",
+  "$$",
+  "s_i = \\frac{x_i}{\\max_j x_j}",
+  "$$",
+  "",
+  "---",
+  "",
+  "Use `evidenceId` to trace every row back to its source.",
+].join("\n");
+
+async function seedDocumentThread(page: import("@playwright/test").Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
+      ),
+    )
+    .toBe(true);
+  return page.evaluate((content) => {
+    const root = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      channelName: "general",
+      content,
+      createdAt: 1_700_910_000,
+    });
+    if (!root) throw new Error("Failed to seed Markdown reader root");
+    window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      channelName: "general",
+      content: "Review complete.",
+      parentEventId: root.id,
+      createdAt: 1_700_910_001,
+    });
+    return root.id;
+  }, DOCUMENT_MARKDOWN);
 }
 
 async function scrollToMiddleVisibleMessage(
@@ -254,7 +323,9 @@ test("focus and split preserve reading context and interaction ownership", async
   await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1400");
   await resizeHandle.dblclick();
   await expect(readingColumn).toHaveAttribute("data-reading-width-px", "1520");
-  const focusMarkdown = readingColumn.locator(".message-markdown").first();
+  const focusMarkdown = readingColumn.locator(
+    `[data-message-id="${rootId}"] .message-markdown`,
+  );
   await expect(focusMarkdown).toBeVisible();
   await expect
     .poll(() =>
@@ -387,6 +458,99 @@ test("focus and split preserve reading context and interaction ownership", async
   });
   await expect(page.getByTestId("focus-thread-drawer-overlay")).toHaveCount(0);
   await expect(channel).not.toHaveAttribute("inert", "");
+});
+
+test("focus thread applies one document theme across Markdown primitives", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz.channels.threadViewMode", "focus");
+  });
+  await installMockBridge(page);
+  await page.goto("/");
+  const rootId = await seedDocumentThread(page);
+
+  await page.getByTestId("channel-general").click();
+  const summary = page.locator(
+    `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
+  );
+  await expect(summary).toBeVisible();
+  await summary.click();
+
+  const body = page.getByTestId("message-thread-body");
+  await body.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  const focusMarkdown = page.locator(
+    `[data-testid="thread-reading-column"] [data-message-id="${rootId}"] .message-markdown`,
+  );
+  await expect(focusMarkdown).toBeVisible();
+  await expect(focusMarkdown).toHaveCSS("font-size", "16px");
+  await expect(focusMarkdown).toHaveCSS("line-height", "28px");
+
+  const title = focusMarkdown.locator('[data-markdown-heading="1"]');
+  await expect(title).toHaveCSS("font-size", "24px");
+  await expect(title).toHaveCSS("font-weight", "650");
+
+  const paragraphs = focusMarkdown.locator("[data-markdown-paragraph]");
+  await expect(paragraphs.nth(1)).toHaveCSS("margin-top", "14px");
+
+  const list = focusMarkdown
+    .locator('[data-markdown-list="unordered"]')
+    .first();
+  await expect(list).toHaveCSS("display", "grid");
+  await expect(list).toHaveCSS("row-gap", "8px");
+  await expect(focusMarkdown.locator(".task-list-item")).toHaveCount(2);
+
+  const quote = focusMarkdown.locator("[data-markdown-blockquote]");
+  await expect(quote).toHaveCSS("font-style", "normal");
+  await expect(quote).toHaveCSS("padding-top", "12px");
+  await expect
+    .poll(() =>
+      quote.evaluate((element) => getComputedStyle(element).backgroundColor),
+    )
+    .not.toBe("rgba(0, 0, 0, 0)");
+
+  const codeBlock = focusMarkdown.locator("[data-code-block] pre");
+  await expect(codeBlock).toHaveCSS("border-radius", "12px");
+  await expect(codeBlock).toHaveCSS("padding-top", "16px");
+  await expect(codeBlock).toHaveCSS("box-shadow", "none");
+
+  const displayMath = focusMarkdown.locator(".katex-display").first();
+  await expect(displayMath).toHaveCSS("overflow-x", "auto");
+  await expect(displayMath).toHaveCSS("margin-top", "24px");
+
+  await expect(
+    focusMarkdown.getByRole("link", { name: "source index" }),
+  ).toHaveCSS("text-decoration-line", "none");
+
+  const tableBlock = focusMarkdown.locator("[data-table-block]");
+  await expect(tableBlock).toHaveCSS("border-top-width", "0px");
+  await expect(tableBlock).toHaveCSS("border-radius", "0px");
+  await expect(tableBlock.locator("table")).toHaveCSS("table-layout", "fixed");
+  await expect
+    .poll(() =>
+      tableBlock.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+
+  await body.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await waitForAnimations(page);
+  await page.screenshot({
+    path: "test-results/buzz-focus-thread-markdown-reader.png",
+  });
+  await codeBlock.scrollIntoViewIfNeeded();
+  await waitForAnimations(page);
+  await page.screenshot({
+    path: "test-results/buzz-focus-thread-markdown-code-math.png",
+  });
 });
 
 test("narrow threads do not offer an unavailable layout switch", async ({

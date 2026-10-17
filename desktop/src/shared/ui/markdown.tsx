@@ -1437,7 +1437,10 @@ function createMarkdownComponents(
     ),
     a: MarkdownAnchor,
     blockquote: ({ children }) => (
-      <blockquote className="border-l-2 border-border pl-4 italic text-muted-foreground [&>*:first-child]:mt-0 [&>*+*]:mt-2">
+      <blockquote
+        className="border-l-2 border-border pl-4 italic text-muted-foreground [&>*:first-child]:mt-0 [&>*+*]:mt-2"
+        data-markdown-blockquote=""
+      >
         {children}
       </blockquote>
     ),
@@ -1477,36 +1480,54 @@ function createMarkdownComponents(
       );
     },
     h1: ({ children }) => (
-      <h1 className="text-xl font-semibold leading-8 tracking-tight">
+      <h1
+        className="text-xl font-semibold leading-8 tracking-tight"
+        data-markdown-heading="1"
+      >
         {children}
       </h1>
     ),
     h2: ({ children }) => (
-      <h2 className="text-lg font-semibold leading-7 tracking-tight">
+      <h2
+        className="text-lg font-semibold leading-7 tracking-tight"
+        data-markdown-heading="2"
+      >
         {children}
       </h2>
     ),
     h3: ({ children }) => (
-      <h3 className="text-base font-semibold leading-6 tracking-tight">
+      <h3
+        className="text-base font-semibold leading-6 tracking-tight"
+        data-markdown-heading="3"
+      >
         {children}
       </h3>
     ),
     h4: ({ children }) => (
-      <h4 className="text-sm font-semibold leading-5 tracking-tight">
+      <h4
+        className="text-sm font-semibold leading-5 tracking-tight"
+        data-markdown-heading="4"
+      >
         {children}
       </h4>
     ),
     h5: ({ children }) => (
-      <h5 className="text-sm font-semibold leading-5 tracking-tight">
+      <h5
+        className="text-sm font-semibold leading-5 tracking-tight"
+        data-markdown-heading="5"
+      >
         {children}
       </h5>
     ),
     h6: ({ children }) => (
-      <h6 className="text-sm font-medium leading-5 tracking-tight text-muted-foreground">
+      <h6
+        className="text-sm font-medium leading-5 tracking-tight text-muted-foreground"
+        data-markdown-heading="6"
+      >
         {children}
       </h6>
     ),
-    hr: () => <hr className="border-border/80" />,
+    hr: () => <hr className="border-border/80" data-markdown-rule="" />,
     img: function MarkdownImage({ alt, src }) {
       const { imetaByUrl } = useMarkdownRuntime();
       useMediaProxyPort();
@@ -1549,9 +1570,21 @@ function createMarkdownComponents(
       );
     },
     input: MarkdownInput,
-    li: ({ children }) => <li className={listItemClassName}>{children}</li>,
-    ol: ({ children }) => (
-      <ol className={cn("list-decimal", listClassName)}>{children}</ol>
+    li: ({ children, className }) => (
+      <li
+        className={cn(listItemClassName, className)}
+        data-markdown-list-item=""
+      >
+        {children}
+      </li>
+    ),
+    ol: ({ children, className }) => (
+      <ol
+        className={cn("list-decimal", listClassName, className)}
+        data-markdown-list="ordered"
+      >
+        {children}
+      </ol>
     ),
     p: ({ children }) => {
       // Detect media-only paragraphs (images + <br> from remarkBreaks).
@@ -1571,7 +1604,7 @@ function createMarkdownComponents(
         return <div>{children}</div>;
       }
 
-      return <p>{children}</p>;
+      return <p data-markdown-paragraph="">{children}</p>;
     },
     pre: ({ children }) => {
       if (!interactive) return <span>{children}</span>;
@@ -1591,19 +1624,40 @@ function createMarkdownComponents(
     strong: ({ children }) => (
       <strong className="font-semibold">{children}</strong>
     ),
-    table: ({ children }) => <MarkdownTable>{children}</MarkdownTable>,
-    td: ({ children }) => (
-      <td className="border-t border-border/70 px-3 py-2 align-top">
+    table: ({ children, className, ...props }) => (
+      <MarkdownTable className={className} {...props}>
+        {children}
+      </MarkdownTable>
+    ),
+    td: ({ children, className, ...props }) => (
+      <td
+        {...props}
+        className={cn(
+          "border-t border-border/70 px-3 py-2 align-top",
+          className,
+        )}
+      >
         {children}
       </td>
     ),
-    th: ({ children }) => (
-      <th className="bg-muted/60 px-3 py-2 font-semibold text-foreground">
+    th: ({ children, className, ...props }) => (
+      <th
+        {...props}
+        className={cn(
+          "bg-muted/60 px-3 py-2 font-semibold text-foreground",
+          className,
+        )}
+      >
         {children}
       </th>
     ),
-    ul: ({ children }) => (
-      <ul className={cn("list-disc", listClassName)}>{children}</ul>
+    ul: ({ children, className }) => (
+      <ul
+        className={cn("list-disc", listClassName, className)}
+        data-markdown-list="unordered"
+      >
+        {children}
+      </ul>
     ),
     mention: function MarkdownMention({
       children,
@@ -1739,7 +1793,7 @@ function createMarkdownComponents(
  * four instances ever exist. Module-stable maps mean cached markdown element
  * trees (see ./markdown/nodeCache.ts) never embed per-mount closures.
  */
-const MARKDOWN_COMPONENT_SCHEMA_VERSION = "5";
+const MARKDOWN_COMPONENT_SCHEMA_VERSION = "6";
 const markdownComponentsByVariant = new Map<string, MarkdownComponentSet>();
 
 type MarkdownComponentSet = { components: Components; variant: string };

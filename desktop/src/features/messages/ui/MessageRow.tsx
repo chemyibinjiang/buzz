@@ -418,7 +418,7 @@ export const MessageRow = React.memo(
               channelNames={channelNames}
               className={cn(
                 isThreadFocusLayout
-                  ? "thread-focus-markdown max-w-full text-base! leading-7! [&>*+*]:mt-5! [&>p+p]:mt-3! [&>*+blockquote]:mt-6! [&>blockquote+*]:mt-6! [&>*+[data-code-block]]:mt-6! [&>[data-code-block]+*]:mt-6! [&>*+[data-table-block]]:mt-6! [&>[data-table-block]+*]:mt-6!"
+                  ? "thread-focus-markdown max-w-full"
                   : "max-w-full text-sm",
                 emojiOnly &&
                   "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
