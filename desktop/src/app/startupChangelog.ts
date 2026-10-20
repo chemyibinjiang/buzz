@@ -8,6 +8,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const STARTUP_CHANGELOG: StartupChangelogEntry[] = [
   {
+    date: "2026-10-21",
+    items: [
+      "【主要更新】同一账户现在可以在不同电脑间同步 Codex task Agent；导入后的 Agent 会统一显示在 Custom Agents，并保留所属设备与运行状态。",
+      "为 Codex task 增加稳定的跨设备指纹，并在界面和原生创建路径同时阻止同一 task 被重复创建为多个 Agent 公钥。",
+      "【主要更新】Windows 收到 @ 提及或待处理消息时，Buzz 托盘图标会显示绿色提示点，悬停时可查看未读数量。",
+      "Buzz Codex Lab 现在会正确注册为独立的 Windows 通知应用，安装和启动时均可自动修复旧版本缺失的通知身份。",
+      "修复 Windows 通知开关被旧权限状态锁死的问题；首次启用会发送原生确认通知，并让 Buzz 出现在系统通知应用列表中。",
+      "Windows 消息通知改走可检测投递结果的原生通道，点击通知后可返回对应频道或消息线程。",
+    ],
+  },
+  {
     date: "2026-10-17",
     items: [
       "【主要更新】频道与私聊中的 Agent 现在支持定时任务和 Heartbeat，可按本地时区设置每日、工作日、每周或自定义周期。",

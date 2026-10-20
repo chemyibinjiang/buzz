@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.21
+
+### Buzz Codex Lab
+
+- 【主要更新】同一账户在不同电脑间可同步 Codex task Agent，导入后的 Agent 统一显示在 Custom Agents，并保留所属设备与运行状态。
+- 为 Codex task 增加稳定的跨设备指纹，在 UI 和原生创建路径同时阻止同一 task 被重复创建为多个 Agent 公钥。
+- 【主要更新】Windows 收到 @ 提及或待处理消息时，Buzz 托盘图标会显示绿色提示点，并在悬停提示中显示未读数量。
+- 修复 Buzz Codex Lab 无法出现在 Windows“系统 > 通知”应用列表的问题；安装和启动时会自动维护独立的应用通知身份。
+- 修复 Windows 通知开关被旧 WebView 权限状态锁死的问题；首次启用会发送原生确认通知并创建系统通知设置入口。
+- Windows 消息通知改走可检测投递结果的原生通道，点击通知后可返回对应频道或消息线程。
+
 ## v0.5.20
 
 ### Buzz Codex Lab
