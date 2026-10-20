@@ -6,7 +6,11 @@ import {
   onAction,
   requestPermission,
 } from "@tauri-apps/plugin-notification";
-import { isLinuxPlatform, isMacPlatform } from "@/shared/lib/platform";
+import {
+  isLinuxPlatform,
+  isMacPlatform,
+  isWindowsPlatform,
+} from "@/shared/lib/platform";
 
 // Backend event emitted when a native Linux notification is clicked or a
 // queued macOS activation becomes available. See src-tauri notification code.
@@ -213,8 +217,10 @@ export async function listenForDesktopNotificationActions(
 
   if (isTauri()) {
     const usesMacActivationQueue = isMacPlatform();
+    const usesNativeActivationEvent =
+      isLinuxPlatform() || isWindowsPlatform() || usesMacActivationQueue;
 
-    if (!isLinuxPlatform() && !usesMacActivationQueue) {
+    if (!usesNativeActivationEvent) {
       try {
         pluginListener = await onAction((notification) => {
           const target = parseNotificationTarget(
@@ -360,10 +366,15 @@ export async function sendDesktopNotification(
     return false;
   }
 
-  // Linux needs a retained D-Bus connection. macOS needs a native notification
-  // center delegate because the Tauri plugin does not deliver desktop clicks.
+  // Linux needs a retained D-Bus connection. Windows needs a stable native
+  // AppUserModelID so it is listed as Buzz in system notification settings.
+  // macOS needs a native notification center delegate because the Tauri plugin
+  // does not deliver desktop clicks.
   // See src-tauri/src/commands/notifications.rs.
-  if (isTauri() && (isLinuxPlatform() || isMacPlatform())) {
+  if (
+    isTauri() &&
+    (isLinuxPlatform() || isMacPlatform() || isWindowsPlatform())
+  ) {
     try {
       await invoke("show_native_notification", {
         title: payload.title,

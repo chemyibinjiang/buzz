@@ -485,3 +485,11 @@
 - 处理：为规范化 Codex task UUID 生成带域分隔的 SHA-256 `codex_task_key`，通过 owner 验证后的 kind:30177 公开投影同步；不公开原始 task ID、workspace、app-server、SSH 配置或凭据。启动 reconcile 和交互保存都会补发该指纹。选择 task 时 UI 会提示已存在的同账户远端 Agent并禁用创建；真正的 Rust 创建命令也会查询 Relay 目录并在生成新密钥前拒绝重复，避免绕过 UI。旧版没有指纹的历史 Agent保持兼容且不会被自动删除，防止误删其他设备仍在运行的身份。
 - 验证：Rust 单测覆盖相同 UUID 的大小写形式生成相同 64 位指纹、不同 task 生成不同指纹、公开内容不包含 task/workspace/SSH 字段，以及 Relay 目录能解析指纹；Tauri `cargo check`、Desktop TypeScript typecheck 和目标 Biome 检查通过。待用两台电脑实测：第一台新版本启动后发布指纹，第二台同步 Agent 后选择同一 task，应显示已有远端 Agent且无法生成第二个公钥。
 - 版本/提交：Buzz Codex Lab `0.5.20` 后续测试版，`Lin/develop`，基线 `f84276e2`，待提交。
+
+## 2026-10-21：Windows 托盘没有 @ 提示且 Buzz 不在系统通知应用列表
+
+- 现象：Windows 右下角 Buzz 托盘图标在收到 @ 提及后没有任何未读提示；Windows `设置 > 系统 > 通知` 的应用列表中也找不到 Buzz，无法像普通桌面应用一样查看或调整其通知权限。
+- 诊断：托盘原生层此前只同步 Agent activity 菜单，从未接收聊天未读或 mention 状态，也没有动态更新图标。系统通知虽通过 Tauri 的 `window.Notification` shim 最终调用 WinRT toast，但插件在后台线程中丢弃投递错误；安装器只给 Start Menu 快捷方式写入 AppUserModelID，没有显式创建 `HKCU\Software\Classes\AppUserModelId\<identifier>` 的显示名和图标注册。本机注册表核验确认 `xyz.chemyibinjiang.buzz.codexlab` 的 AppUserModelId 和 Notifications Settings 项均不存在，因此 Windows 无法稳定把 toast 归属为 Buzz，失败时前端还会误判为发送成功。
+- 处理：把当前 Community 已有的去重桌面 badge 计数与其他 Community 的 mention 数汇总后同步到原生托盘；Windows 托盘在计数大于零时给原图标叠加带白色描边的绿色圆点，并在 tooltip 显示未读数量，清零或切换 Community 时恢复默认图标。Windows 通知改走可返回实际投递结果并保留点击句柄的原生 Rust 路径，使用应用配置中的稳定 AppUserModelID，点击后继续通过既有 target 路由打开对应频道/线程。NSIS 安装/卸载钩子和应用启动同时维护 AppUserModelId 的 DisplayName、IconUri 与背景色注册，兼容旧安装直接升级修复。
+- 验证：Desktop TypeScript typecheck、目标 Biome 检查、E2E build、Tauri `cargo check` 和 Rustfmt 通过；托盘图标聚焦 Rust 单测 1/1 通过，确认尺寸不变、左上角像素不受影响且右下角生成绿色提示点；通知与 Community Rail 聚焦前端测试 8/8 通过。完整 Desktop Node 测试运行到 4598 项时有 10 项既有 thread-replies loader 用例因测试 loader 返回 `null` 报 `ERR_INVALID_RETURN_PROPERTY_VALUE`，失败集中在同一未改动模块，本轮相关测试均通过。
+- 版本/提交：Buzz Codex Lab `0.5.20` 后续测试版，`Lin/develop`，基线 `7234c283`，本条修复提交。

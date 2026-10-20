@@ -32,9 +32,11 @@ const MAX_RECENT_TRAY_ACTIVITIES = 5;
  * forwards its navigation actions into the React app.
  */
 export function useTrayMenu({
+  attentionCount,
   channels,
   goChannel,
 }: {
+  attentionCount: number;
   channels: Channel[];
   goChannel: (channelId: string) => Promise<unknown>;
 }): void {
@@ -111,6 +113,15 @@ export function useTrayMenu({
       console.error("Failed to update the native tray menu", error);
     });
   }, [activities, recentActivities]);
+
+  React.useEffect(() => {
+    if (!isTauri()) return;
+    void invoke("update_tray_attention", {
+      attentionCount,
+    }).catch((error) => {
+      console.error("Failed to update the native tray attention state", error);
+    });
+  }, [attentionCount]);
 
   React.useEffect(() => {
     if (!isTauri()) return;

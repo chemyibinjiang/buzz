@@ -311,6 +311,12 @@ pub fn run() {
         .manage(terminal_runtime::TerminalSessions::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            #[cfg(target_os = "windows")]
+            if let Err(error) = initialize_windows_notification_identity(&app_handle) {
+                eprintln!(
+                    "buzz-desktop: failed to register Windows notification identity: {error}"
+                );
+            }
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             tray_menu::init(&app_handle)?;
             #[cfg(target_os = "macos")]
@@ -937,6 +943,8 @@ pub fn run() {
             tray_menu::take_tray_actions,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             tray_menu::update_tray_agent_activity,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            tray_menu::update_tray_attention,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

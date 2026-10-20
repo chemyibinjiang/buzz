@@ -200,6 +200,46 @@ fn tray_icon<R: Runtime>(app: &AppHandle<R>) -> Image<'static> {
     }
 }
 
+/// Adds a high-contrast green attention dot to the lower-right of a tray icon.
+/// The white ring keeps it legible on both light and dark Windows taskbars.
+fn tray_icon_with_attention(base: Image<'static>) -> Image<'static> {
+    let width = base.width();
+    let height = base.height();
+    if width == 0 || height == 0 {
+        return base;
+    }
+
+    let mut rgba = base.rgba().to_vec();
+    let short_edge = width.min(height) as f32;
+    let outer_radius = (short_edge * 0.2).max(2.0);
+    let inner_radius = (outer_radius - (short_edge * 0.045).max(1.0)).max(1.0);
+    let center_x = width as f32 - outer_radius - 1.0;
+    let center_y = height as f32 - outer_radius - 1.0;
+    let outer_radius_squared = outer_radius * outer_radius;
+    let inner_radius_squared = inner_radius * inner_radius;
+
+    for y in 0..height {
+        for x in 0..width {
+            let delta_x = x as f32 + 0.5 - center_x;
+            let delta_y = y as f32 + 0.5 - center_y;
+            let distance_squared = delta_x * delta_x + delta_y * delta_y;
+            if distance_squared > outer_radius_squared {
+                continue;
+            }
+
+            let index = ((y * width + x) * 4) as usize;
+            let color = if distance_squared <= inner_radius_squared {
+                [34, 197, 94, 255]
+            } else {
+                [255, 255, 255, 255]
+            };
+            rgba[index..index + 4].copy_from_slice(&color);
+        }
+    }
+
+    Image::new_owned(rgba, width, height)
+}
+
 /// A running agent and its current channel.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -225,6 +265,7 @@ struct TrayActionQueue {
 struct TrayMenuState<R: Runtime> {
     activity_items: Mutex<Vec<TrayActivityMenuItem<R>>>,
     action_queue: Mutex<TrayActionQueue>,
+    attention_count: Mutex<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -521,6 +562,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             community_generation: 0,
             pending_actions: Vec::new(),
         }),
+        attention_count: Mutex::new(0),
     });
     let tray_builder = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
@@ -596,7 +638,54 @@ pub fn clear_tray_agent_activity<R: Runtime>(app: AppHandle<R>) -> Result<(), St
     queue.pending_actions.clear();
     drop(queue);
 
-    update_tray_agent_activity(app, Vec::new(), Vec::new())
+    update_tray_agent_activity(app.clone(), Vec::new(), Vec::new())?;
+    update_tray_attention(app, 0)
+}
+
+/// Updates the Windows tray icon's unread-attention presentation. A green dot
+/// is intentionally used instead of rendering a number into the tiny icon;
+/// the exact count remains available in the tooltip.
+#[tauri::command]
+pub fn update_tray_attention<R: Runtime>(
+    app: AppHandle<R>,
+    attention_count: u32,
+) -> Result<(), String> {
+    let state = app.state::<TrayMenuState<R>>();
+    let mut current_count = state
+        .attention_count
+        .lock()
+        .map_err(|_| "Buzz tray attention state is unavailable".to_string())?;
+    if *current_count == attention_count {
+        return Ok(());
+    }
+
+    let tray = app
+        .tray_by_id(TRAY_ID)
+        .ok_or_else(|| "Buzz tray icon is not available".to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let icon = if attention_count > 0 {
+            tray_icon_with_attention(tray_icon(&app))
+        } else {
+            tray_icon(&app)
+        };
+        tray.set_icon(Some(icon))
+            .map_err(|error| error.to_string())?;
+    }
+
+    let tooltip = if attention_count > 0 {
+        format!(
+            "Buzz — {attention_count} unread notification{}",
+            if attention_count == 1 { "" } else { "s" }
+        )
+    } else {
+        "Buzz".to_string()
+    };
+    tray.set_tooltip(Some(tooltip))
+        .map_err(|error| error.to_string())?;
+    *current_count = attention_count;
+    Ok(())
 }
 
 /// Replaces the native menu's activity section with the current live work.
@@ -655,7 +744,24 @@ pub fn update_tray_agent_activity<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{requeue_actions, TrayAction, TrayActionQueue};
+    use super::{requeue_actions, tray_icon_with_attention, TrayAction, TrayActionQueue};
+    use tauri::image::Image;
+
+    #[test]
+    fn attention_icon_adds_green_dot_without_changing_dimensions() {
+        let base = Image::new_owned(vec![0; 32 * 32 * 4], 32, 32);
+        let icon = tray_icon_with_attention(base);
+
+        assert_eq!(icon.width(), 32);
+        assert_eq!(icon.height(), 32);
+        assert_eq!(&icon.rgba()[0..4], &[0, 0, 0, 0]);
+
+        let center_index = ((24 * 32 + 24) * 4) as usize;
+        assert_eq!(
+            &icon.rgba()[center_index..center_index + 4],
+            &[34, 197, 94, 255]
+        );
+    }
 
     #[test]
     fn open_channel_action_serializes_with_frontend_field_names() {

@@ -22,10 +22,7 @@ import type { Community } from "@/features/communities/types";
 import { EditCommunityDialog } from "@/features/communities/ui/EditCommunityDialog";
 import { useCommunityIcons } from "@/features/communities/useCommunityIcons";
 import { useMyRelayMembershipLookupQuery } from "@/features/community-members/hooks";
-import {
-  useCommunityUnread,
-  type CommunityUnreadState,
-} from "@/features/communities/useCommunityUnread";
+import type { CommunityUnreadState } from "@/features/communities/useCommunityUnread";
 import { useAppShell } from "@/app/AppShellContext";
 import {
   ContextMenu,
@@ -44,11 +41,13 @@ type CommunityRailProps = {
   activeCommunityId: string | null;
   onSwitchCommunity: (id: string) => void;
   onAddCommunity: () => void;
+  onMarkCommunityRead: (communityId: string) => Promise<void>;
   onUpdateCommunity: (
     id: string,
     updates: Partial<Pick<Community, "name" | "relayUrl" | "lanRelayUrl">>,
   ) => void;
   onReorderCommunities: (orderedIds: string[]) => void;
+  unreadByCommunity: Record<string, CommunityUnreadState>;
 };
 
 const MAX_BADGE = 99;
@@ -309,13 +308,11 @@ export function CommunityRail({
   activeCommunityId,
   onSwitchCommunity,
   onAddCommunity,
+  onMarkCommunityRead,
   onUpdateCommunity,
   onReorderCommunities,
+  unreadByCommunity,
 }: CommunityRailProps) {
-  const { unreadByCommunity, markCommunityRead } = useCommunityUnread(
-    communities,
-    activeCommunityId,
-  );
   const iconsByCommunity = useCommunityIcons(communities);
   const { markAllChannelsRead, onOpenSettings } = useAppShell();
   const myMembershipQuery = useMyRelayMembershipLookupQuery();
@@ -363,7 +360,7 @@ export function CommunityRail({
       markAllChannelsRead();
       return;
     }
-    markCommunityRead(community.id).catch((error) => {
+    onMarkCommunityRead(community.id).catch((error) => {
       console.warn(
         `[CommunityRail] mark all read failed community=${community.id}:`,
         error,

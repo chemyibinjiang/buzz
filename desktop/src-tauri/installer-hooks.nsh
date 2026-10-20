@@ -20,3 +20,18 @@
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro BUZZ_STOP_RUNNING_PROCESSES
 !macroend
+
+; Windows toast notifications need a stable AppUserModelID registration in
+; addition to the AppUserModelID stored on Tauri's Start Menu shortcut. Keeping
+; the display name and icon here makes Buzz appear as its own application in
+; Settings > System > Notifications instead of being absent or attributed to a
+; WebView/PowerShell host.
+!macro NSIS_HOOK_POSTINSTALL
+  WriteRegStr SHCTX "Software\Classes\AppUserModelId\${BUNDLEID}" "DisplayName" "${PRODUCTNAME}"
+  WriteRegStr SHCTX "Software\Classes\AppUserModelId\${BUNDLEID}" "IconUri" "$INSTDIR\${MAINBINARYNAME}.exe"
+  WriteRegStr SHCTX "Software\Classes\AppUserModelId\${BUNDLEID}" "IconBackgroundColor" "0"
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  DeleteRegKey SHCTX "Software\Classes\AppUserModelId\${BUNDLEID}"
+!macroend

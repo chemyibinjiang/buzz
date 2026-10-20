@@ -66,6 +66,13 @@ plist = "1"
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_Foundation"] }
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native", "vendored"], optional = true }
 user-idle = { version = "0.6", default-features = false }
+# Used directly instead of the JS Notification shim so Windows toast failures
+# are observable and notification clicks can be routed through the same native
+# activation event as Linux.
+notify-rust = "4"
+# Register the stable AppUserModelID under HKCU for both fresh installs and
+# upgrades from installers that only annotated the Start Menu shortcut.
+windows-registry = "0.6"
 
 [dependencies]
 atomic-write-file = "0.3"

@@ -76,6 +76,7 @@ import { CommunityRail } from "@/features/sidebar/ui/CommunityRail";
 import { useChannelMutes } from "@/features/sidebar/lib/useChannelMutes";
 import { useChannelStars } from "@/features/sidebar/lib/useChannelStars";
 import { useCommunities } from "@/features/communities/useCommunities";
+import { useCommunityUnread } from "@/features/communities/useCommunityUnread";
 import {
   consumePendingCommunityRestore,
   loadCommunityDestination,
@@ -104,6 +105,11 @@ export function AppShell() {
   useTauriWindowDrag();
   useWebviewScrollBoundaryLock();
   const communitiesHook = useCommunities();
+  const activeCommunityId = communitiesHook.activeCommunity?.id ?? null;
+  const { unreadByCommunity, markCommunityRead } = useCommunityUnread(
+    communitiesHook.communities,
+    activeCommunityId,
+  );
   const {
     handleHuddleCompanionOpen,
     handleHuddleEnded,
@@ -386,6 +392,17 @@ export function AppShell() {
       followedRootIds,
     },
   );
+  const inactiveCommunityMentionCount = React.useMemo(
+    () =>
+      Object.entries(unreadByCommunity).reduce(
+        (total, [communityId, unread]) =>
+          communityId !== activeCommunityId && unread.state === "ready"
+            ? total + (unread.count ?? 0)
+            : total,
+        0,
+      ),
+    [activeCommunityId, unreadByCommunity],
+  );
 
   const {
     getThreadReadAt,
@@ -447,6 +464,15 @@ export function AppShell() {
       channels,
       huddleBackingChannelIds,
     );
+  // Reuse the same de-duplicated active-community count as the taskbar badge,
+  // then add mention counts observed on inactive communities. This also covers
+  // a mention arriving in the currently selected channel while Buzz is hidden,
+  // because that event is projected into Home even though the channel itself
+  // is not marked unread.
+  const trayAttentionCount =
+    unreadChannelNotificationCount +
+    homeBadgeCountExcludingHighPriority +
+    inactiveCommunityMentionCount;
   const dueReminderBadge = useDueReminderBadgeCount(
     identityQuery.data?.pubkey,
     notificationSettings.settings.homeBadgeEnabled,
@@ -675,7 +701,11 @@ export function AppShell() {
   return (
     <PreventSleepProvider>
       {!isHuddleRoom ? (
-        <AppShellTrayMenu channels={channels} goChannel={goChannel} />
+        <AppShellTrayMenu
+          attentionCount={trayAttentionCount}
+          channels={channels}
+          goChannel={goChannel}
+        />
       ) : null}
       <ChannelNavigationProvider channels={channels}>
         <AppShellProvider
@@ -731,12 +761,14 @@ export function AppShell() {
           >
             {hasCommunityRail && !isHuddleRoom ? (
               <CommunityRail
-                activeCommunityId={communitiesHook.activeCommunity?.id ?? null}
+                activeCommunityId={activeCommunityId}
                 onAddCommunity={addCommunityDialog.openDialog}
+                onMarkCommunityRead={markCommunityRead}
                 onReorderCommunities={communitiesHook.reorderCommunities}
                 onSwitchCommunity={handleSwitchCommunity}
                 onUpdateCommunity={communitiesHook.updateCommunity}
                 communities={communitiesHook.communities}
+                unreadByCommunity={unreadByCommunity}
               />
             ) : null}
             <SidebarProvider

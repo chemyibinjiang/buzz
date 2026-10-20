@@ -11491,6 +11491,7 @@ export function maybeInstallE2eTauriMocks() {
         return;
       }
       case "update_tray_agent_activity":
+      case "update_tray_attention":
       case "clear_tray_agent_activity":
       case "requeue_tray_actions":
         return null;
