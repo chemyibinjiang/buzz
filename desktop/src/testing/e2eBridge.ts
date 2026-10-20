@@ -11494,7 +11494,11 @@ export function maybeInstallE2eTauriMocks() {
       case "update_tray_attention":
       case "clear_tray_agent_activity":
       case "requeue_tray_actions":
+      case "show_native_notification":
         return null;
+      case "windows_notification_permission_state":
+      case "request_windows_notification_access":
+        return "granted";
       case "take_tray_actions":
         return [];
       case "get_profile":

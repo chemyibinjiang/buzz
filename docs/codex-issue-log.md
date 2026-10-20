@@ -493,3 +493,11 @@
 - 处理：把当前 Community 已有的去重桌面 badge 计数与其他 Community 的 mention 数汇总后同步到原生托盘；Windows 托盘在计数大于零时给原图标叠加带白色描边的绿色圆点，并在 tooltip 显示未读数量，清零或切换 Community 时恢复默认图标。Windows 通知改走可返回实际投递结果并保留点击句柄的原生 Rust 路径，使用应用配置中的稳定 AppUserModelID，点击后继续通过既有 target 路由打开对应频道/线程。NSIS 安装/卸载钩子和应用启动同时维护 AppUserModelId 的 DisplayName、IconUri 与背景色注册，兼容旧安装直接升级修复。
 - 验证：Desktop TypeScript typecheck、目标 Biome 检查、E2E build、Tauri `cargo check` 和 Rustfmt 通过；托盘图标聚焦 Rust 单测 1/1 通过，确认尺寸不变、左上角像素不受影响且右下角生成绿色提示点；通知与 Community Rail 聚焦前端测试 8/8 通过。完整 Desktop Node 测试运行到 4598 项时有 10 项既有 thread-replies loader 用例因测试 loader 返回 `null` 报 `ERR_INVALID_RETURN_PROPERTY_VALUE`，失败集中在同一未改动模块，本轮相关测试均通过。
 - 版本/提交：Buzz Codex Lab `0.5.20` 后续测试版，`Lin/develop`，基线 `7234c283`，本条修复提交。
+
+## 2026-10-21：Windows 通知身份已注册但 Buzz 通知开关仍被锁死
+
+- 现象：安装上一版后，收到 @ 时托盘绿点已经正常出现，但 Buzz 的 Desktop alerts 开关保持关闭并提示“Desktop notifications are blocked”；Windows 通知应用列表中仍没有 Buzz，导致用户既无法在 Buzz 内启用，也无法先在 Windows 中启用。
+- 诊断：AppUserModelID 注册已经成功写入，但前端在调用新的 Windows 原生通知命令之前，仍先读取 WebView/Tauri 通知插件的浏览器式 permission。该旧权限接口返回 `denied` 后会直接阻止原生 toast 投递并关闭 Buzz 内设置。Windows 桌面应用实际上没有浏览器式授权弹窗，而系统通常要在第一条原生 toast 成功提交后才创建 per-app 通知设置项，因此形成了“没有系统条目就不能启用、没有启用就永远不发送首条 toast”的死锁。
+- 处理：Windows 改用原生权限状态命令，读取系统全局 `ToastEnabled` 和当前 AppUserModelID 的 per-app `Enabled`；只有明确为 `0` 才视为 blocked，设置项尚未生成时返回 `default` 而不是旧插件的 `denied`。用户打开 Desktop alerts 时会先补齐通知身份并发送一条原生确认通知，以触发 Windows 创建 Buzz 的通知应用条目；普通消息在该系统条目仍处于首次创建窗口时也允许直接尝试原生投递，避免再次形成权限死锁。E2E bridge 同步支持新增命令。
+- 验证：Rustfmt、Tauri `cargo check`、Desktop TypeScript typecheck、目标 Biome、E2E build 与通知聚焦前端测试通过；Windows 原生权限状态单测 4/4 通过，覆盖首次无 per-app 条目、全局关闭、单应用关闭和已有条目未显式覆盖四种情况。本机还确认安装包已正确写入 `xyz.chemyibinjiang.buzz.codexlab` 身份，Start Menu 快捷方式的 AppUserModelID 与之相同，而 Windows per-app 通知键确实尚不存在，符合权限死锁诊断。最终 toast 展示和 Windows 设置列表登记待新安装包实测。
+- 版本/提交：Buzz Codex Lab `0.5.20` 后续测试版，`Lin/develop`，基线 `35dcee1c`，本条修复提交。

@@ -89,10 +89,80 @@ pub fn initialize_windows_notification_identity(app: &tauri::AppHandle) -> Resul
     Ok(())
 }
 
+/// Returns the effective Windows notification permission for this installed
+/// application. Unlike browser notifications, unpackaged desktop apps do not
+/// have a permission prompt: notifications are allowed unless the global or
+/// per-app Windows setting explicitly disables them.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn windows_notification_permission_state(
+    app: tauri::AppHandle,
+) -> Result<&'static str, String> {
+    initialize_windows_notification_identity(&app)?;
+    Ok(windows::permission_state(&app.config().identifier))
+}
+
+/// Enables Buzz's application-level notification preference by posting one
+/// native toast. The first successful toast is what makes Windows create the
+/// per-app entry under Settings > System > Notifications.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn request_windows_notification_access(
+    app: tauri::AppHandle,
+) -> Result<&'static str, String> {
+    initialize_windows_notification_identity(&app)?;
+    if windows::permission_state(&app.config().identifier) == "denied" {
+        return Ok("denied");
+    }
+
+    windows::show(
+        app,
+        "Buzz notifications enabled".to_string(),
+        Some("Mentions and needs-action alerts can now appear here.".to_string()),
+        None,
+    )
+    .await?;
+    Ok("granted")
+}
+
 #[cfg(target_os = "windows")]
 mod windows {
     use super::NATIVE_NOTIFICATION_ACTIVATED_EVENT;
     use tauri::Emitter;
+    use windows_registry::CURRENT_USER;
+
+    const PUSH_NOTIFICATIONS_KEY: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\PushNotifications";
+    const APP_NOTIFICATION_SETTINGS_ROOT: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings";
+
+    fn registry_u32(path: &str, name: &str) -> Option<u32> {
+        CURRENT_USER.open(path).ok()?.get_u32(name).ok()
+    }
+
+    pub(super) fn permission_state(identifier: &str) -> &'static str {
+        let global_enabled = registry_u32(PUSH_NOTIFICATIONS_KEY, "ToastEnabled");
+        let app_settings_path = format!(r"{APP_NOTIFICATION_SETTINGS_ROOT}\{identifier}");
+        let app_settings = CURRENT_USER.open(&app_settings_path).ok();
+        let app_enabled = app_settings
+            .as_ref()
+            .and_then(|key| key.get_u32("Enabled").ok());
+        permission_state_from_values(global_enabled, app_settings.is_some(), app_enabled)
+    }
+
+    fn permission_state_from_values(
+        global_enabled: Option<u32>,
+        app_settings_exist: bool,
+        app_enabled: Option<u32>,
+    ) -> &'static str {
+        if global_enabled == Some(0) || app_enabled == Some(0) {
+            "denied"
+        } else if !app_settings_exist {
+            "default"
+        } else {
+            "granted"
+        }
+    }
 
     pub async fn show(
         app: tauri::AppHandle,
@@ -146,6 +216,34 @@ mod windows {
         posted_rx
             .await
             .map_err(|_| "Windows notification worker exited before posting".to_string())?
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::permission_state_from_values;
+
+        #[test]
+        fn missing_per_app_windows_settings_need_bootstrap_toast() {
+            assert_eq!(permission_state_from_values(None, false, None), "default");
+        }
+
+        #[test]
+        fn global_notification_disable_wins() {
+            assert_eq!(permission_state_from_values(Some(0), false, None), "denied");
+        }
+
+        #[test]
+        fn per_app_notification_disable_wins() {
+            assert_eq!(
+                permission_state_from_values(Some(1), true, Some(0)),
+                "denied"
+            );
+        }
+
+        #[test]
+        fn existing_per_app_settings_without_enabled_override_are_granted() {
+            assert_eq!(permission_state_from_values(None, true, None), "granted");
+        }
     }
 }
 

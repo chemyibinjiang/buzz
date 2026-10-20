@@ -738,6 +738,10 @@ pub fn run() {
             remove_reaction,
             get_event,
             show_native_notification,
+            #[cfg(target_os = "windows")]
+            windows_notification_permission_state,
+            #[cfg(target_os = "windows")]
+            request_windows_notification_access,
             #[cfg(target_os = "macos")]
             macos_notifications::take_pending_activations,
             #[cfg(target_os = "macos")]

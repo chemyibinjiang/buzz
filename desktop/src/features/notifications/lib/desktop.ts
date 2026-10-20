@@ -18,6 +18,10 @@ const NATIVE_NOTIFICATION_ACTIVATED_EVENT = "native-notification-activated";
 const TAKE_PENDING_MACOS_NOTIFICATION_ACTIVATIONS = "take_pending_activations";
 const MACOS_NOTIFICATION_PERMISSION_STATE = "notification_permission_state";
 const REQUEST_MACOS_NOTIFICATION_ACCESS = "request_notification_access";
+const WINDOWS_NOTIFICATION_PERMISSION_STATE =
+  "windows_notification_permission_state";
+const REQUEST_WINDOWS_NOTIFICATION_ACCESS =
+  "request_windows_notification_access";
 
 export type DesktopNotificationPermissionState =
   | NotificationPermission
@@ -132,6 +136,20 @@ function shouldUseMacDevelopmentFallback(error: unknown): boolean {
 }
 
 export async function getDesktopNotificationPermissionState(): Promise<DesktopNotificationPermissionState> {
+  if (isTauri() && isWindowsPlatform()) {
+    try {
+      return await invoke<NotificationPermission>(
+        WINDOWS_NOTIFICATION_PERMISSION_STATE,
+      );
+    } catch (error) {
+      console.warn(
+        "[desktop] failed to read native Windows notification state:",
+        error,
+      );
+      return "default";
+    }
+  }
+
   if (!hasNotificationApi()) {
     return "unsupported";
   }
@@ -169,7 +187,8 @@ let pendingPermissionRequest: Promise<DesktopNotificationPermissionState> | null
   null;
 
 export async function requestDesktopNotificationAccess(): Promise<DesktopNotificationPermissionState> {
-  if (!hasNotificationApi()) {
+  const usesNativeWindowsNotifications = isTauri() && isWindowsPlatform();
+  if (!hasNotificationApi() && !usesNativeWindowsNotifications) {
     return "unsupported";
   }
 
@@ -177,8 +196,9 @@ export async function requestDesktopNotificationAccess(): Promise<DesktopNotific
     return pendingPermissionRequest;
   }
 
-  const request =
-    isTauri() && isMacPlatform()
+  const request = usesNativeWindowsNotifications
+    ? invoke<NotificationPermission>(REQUEST_WINDOWS_NOTIFICATION_ACCESS)
+    : isTauri() && isMacPlatform()
       ? invoke<NotificationPermission>(REQUEST_MACOS_NOTIFICATION_ACCESS).catch(
           (error) => {
             if (shouldUseMacDevelopmentFallback(error)) {
@@ -362,7 +382,10 @@ export async function revealDesktopAppWindow(): Promise<void> {
 export async function sendDesktopNotification(
   payload: DesktopNotificationPayload,
 ): Promise<boolean> {
-  if ((await getDesktopNotificationPermissionState()) !== "granted") {
+  const permission = await getDesktopNotificationPermissionState();
+  const canBootstrapWindowsEntry =
+    isTauri() && isWindowsPlatform() && permission === "default";
+  if (permission !== "granted" && !canBootstrapWindowsEntry) {
     return false;
   }
 
