@@ -501,3 +501,10 @@
 - 处理：Windows 改用原生权限状态命令，读取系统全局 `ToastEnabled` 和当前 AppUserModelID 的 per-app `Enabled`；只有明确为 `0` 才视为 blocked，设置项尚未生成时返回 `default` 而不是旧插件的 `denied`。用户打开 Desktop alerts 时会先补齐通知身份并发送一条原生确认通知，以触发 Windows 创建 Buzz 的通知应用条目；普通消息在该系统条目仍处于首次创建窗口时也允许直接尝试原生投递，避免再次形成权限死锁。E2E bridge 同步支持新增命令。
 - 验证：Rustfmt、Tauri `cargo check`、Desktop TypeScript typecheck、目标 Biome、E2E build 与通知聚焦前端测试通过；Windows 原生权限状态单测 4/4 通过，覆盖首次无 per-app 条目、全局关闭、单应用关闭和已有条目未显式覆盖四种情况。本机还确认安装包已正确写入 `xyz.chemyibinjiang.buzz.codexlab` 身份，Start Menu 快捷方式的 AppUserModelID 与之相同，而 Windows per-app 通知键确实尚不存在，符合权限死锁诊断。最终 toast 展示和 Windows 设置列表登记待新安装包实测。
 - 版本/提交：Buzz Codex Lab `0.5.20` 后续测试版，`Lin/develop`，基线 `35dcee1c`，本条修复提交。
+
+## 2026-10-21：发布 Buzz Codex Lab 0.5.21 正式版
+
+- 现象/需求：Windows 托盘 @ 提示、系统原生通知注册与通知开关修复已经通过用户实机测试，需要整理更新日志并发布可在线升级的 `0.5.21` 正式版；同时纳入同账户跨电脑同步 Codex task Agent、Custom Agents 归类和跨设备稳定 task 指纹等近期改进。
+- 处理：将 Desktop、Tauri 和 updater 版本统一更新为 `0.5.21`，在根更新日志与应用内最近十日更新日志中记录主要变化；使用本地 updater 私钥生成带 Tauri updater 签名的 Windows NSIS 安装包。创建并推送 `buzz-codex-lab-v0.5.21` 标签，发布非草稿、非预发布的 GitHub Release；滚动通道 `buzz-codex-lab-latest` 更新为 `0.5.21`，并按保留策略仅留下当前 `0.5.21`、前一版 `0.5.20` 及 `latest.json`，未导出 zip。
+- 验证：Desktop TypeScript typecheck、目标 Biome、`startupChangelog.test.mjs` 3/3、Tauri `cargo check` 和 `git diff --check` 通过；本地安装包 updater 签名验证通过。安装包大小 `230405552` 字节，SHA-256 为 `1af4bdb411cfcf5d1ad7ce33d0198ed4fee745bff329d509aae9edf10658893b`。在线 `latest.json` 回读版本为 `0.5.21`，下载 URL 指向 `Buzz-Codex-Lab_0.5.21_db2ac881cfe1_x64-setup.exe`，线上签名与本地产物一致。正式 Release 为 `https://github.com/chemyibinjiang/buzz/releases/tag/buzz-codex-lab-v0.5.21`，状态为 `isDraft=false`、`isPrerelease=false`。
+- 版本/提交：Buzz Codex Lab `0.5.21`，发布提交 `db2ac881cfe1`；本条发布记录随后提交到 `Lin/develop`，版本标签继续固定指向发布提交。
