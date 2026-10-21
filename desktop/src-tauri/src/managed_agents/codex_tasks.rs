@@ -297,6 +297,43 @@ pub fn save_codex_task_binding(
     save_binding_store(app, &store)
 }
 
+fn update_task_model_in_store(
+    store: &mut CodexTaskBindingStore,
+    agent_pubkey: &str,
+    model: Option<String>,
+) -> bool {
+    let Some(binding) = store.bindings.get_mut(agent_pubkey) else {
+        return false;
+    };
+    let normalized = model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if binding.model == normalized {
+        return false;
+    }
+    binding.model = normalized;
+    store.version = STORE_VERSION;
+    true
+}
+
+/// Update the model plus reasoning-effort ID owned by a Codex task binding.
+///
+/// Returns `false` when the agent is not task-bound or the value is unchanged.
+pub fn update_codex_task_model(
+    app: &AppHandle,
+    agent_pubkey: &str,
+    model: Option<String>,
+) -> Result<bool, String> {
+    let mut store = load_binding_store(app)?;
+    if !update_task_model_in_store(&mut store, agent_pubkey, model) {
+        return Ok(false);
+    }
+    save_binding_store(app, &store)?;
+    Ok(true)
+}
+
 fn prune_stale_codex_task_bindings(
     store: &mut CodexTaskBindingStore,
     active_agent_pubkeys: &HashSet<String>,
@@ -1242,6 +1279,43 @@ mod tests {
         assert!(!store.bindings.contains_key("old-agent"));
         assert_eq!(store.bindings.get("new-agent"), Some(&binding));
         assert_eq!(store.bindings.len(), 1);
+    }
+
+    #[test]
+    fn task_model_update_persists_model_and_reasoning_effort() {
+        let binding = CodexTaskBinding {
+            task_id: "019eca9a-beb9-7902-8ce6-527b2ba56020".to_string(),
+            thread_name: "Electroplating DoE".to_string(),
+            workspace: r"C:\repo".to_string(),
+            updated_at: "2026-08-26T00:00:00Z".to_string(),
+            model: Some("gpt-5.6-sol[high]".to_string()),
+            app_server_url: Some(DEFAULT_CODEX_SHARED_APP_SERVER_URL.to_string()),
+            ssh_host: None,
+            ssh_port: None,
+            ssh_username: None,
+            ssh_identity_file: None,
+            ssh_remote_app_server_port: None,
+            ssh_remote_shell: None,
+        };
+        let mut store = CodexTaskBindingStore {
+            version: STORE_VERSION,
+            bindings: HashMap::from([("agent".to_string(), binding)]),
+        };
+
+        assert!(update_task_model_in_store(
+            &mut store,
+            "agent",
+            Some(" gpt-5.6-sol[xhigh] ".to_string()),
+        ));
+        assert_eq!(
+            store.bindings["agent"].model.as_deref(),
+            Some("gpt-5.6-sol[xhigh]")
+        );
+        assert!(!update_task_model_in_store(
+            &mut store,
+            "agent",
+            Some("gpt-5.6-sol[xhigh]".to_string()),
+        ));
     }
 
     #[test]

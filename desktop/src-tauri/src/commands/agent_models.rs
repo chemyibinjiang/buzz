@@ -727,6 +727,7 @@ pub async fn update_managed_agent(
 
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
+        let requested_task_model = input.model.clone();
 
         let mut name_changed = false;
         if let Some(name_update) = input.name {
@@ -830,6 +831,22 @@ pub async fn update_managed_agent(
         record.updated_at = now_iso();
 
         save_managed_agents(&app, &records)?;
+        if let Some(model_update) = requested_task_model {
+            if let Err(error) =
+                crate::managed_agents::update_codex_task_model(&app, &input.pubkey, model_update)
+            {
+                let rollback_result = records
+                    .iter_mut()
+                    .find(|record| record.pubkey == input.pubkey)
+                    .map(|record| *record = previous_record.clone());
+                if rollback_result.is_some() {
+                    let _ = save_managed_agents(&app, &records);
+                }
+                return Err(format!(
+                    "failed to update the Codex task model selection: {error}"
+                ));
+            }
+        }
 
         let record = records
             .iter()

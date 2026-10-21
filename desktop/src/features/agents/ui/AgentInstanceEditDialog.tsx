@@ -90,6 +90,12 @@ import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
 import { resolveModelFieldStatusMessage } from "./agentConfigControls";
 import { AdvancedRequiredBadge } from "./AdvancedRequiredBadge";
 import { showAgentProfileSyncWarning } from "./agentProfileSyncWarning";
+import {
+  codexBaseModelOptions,
+  codexEffortOptions,
+  formatCodexModelSelection,
+  parseCodexModelSelection,
+} from "./codexTaskModelSelection";
 import { AddCustomHarnessDialog } from "./AddCustomHarnessDialog";
 import {
   ADD_CUSTOM_HARNESS_OPTION,
@@ -463,6 +469,21 @@ export function AgentInstanceEditDialog({
     provider: providerForDiscovery,
     selectedRuntime,
   });
+  const codexModelSelection = React.useMemo(
+    () => parseCodexModelSelection(model),
+    [model],
+  );
+  const modelOptionsForPicker = React.useMemo(
+    () =>
+      isCodexTaskBound
+        ? codexBaseModelOptions(discoveredModelOptions, model)
+        : discoveredModelOptions,
+    [discoveredModelOptions, isCodexTaskBound, model],
+  );
+  const codexReasoningOptions = React.useMemo(
+    () => codexEffortOptions(discoveredModelOptions, model),
+    [discoveredModelOptions, model],
+  );
 
   // D2: derive advancedRequiredEnvKeys for EnvVarsEditor display.
   // The full requiredEnvKeys/requiredEnvKeyMissing continue driving Save gating.
@@ -617,6 +638,24 @@ export function AgentInstanceEditDialog({
   }
 
   function handleModelDropdownChange(nextValue: string) {
+    if (isCodexTaskBound) {
+      const nextModel =
+        nextValue === "" ? "" : parseCodexModelSelection(nextValue).model;
+      const supportedEfforts = codexEffortOptions(
+        discoveredModelOptions,
+        formatCodexModelSelection(nextModel, codexModelSelection.effort),
+      );
+      const nextEffort = supportedEfforts.some(
+        (option) => option.value === codexModelSelection.effort,
+      )
+        ? codexModelSelection.effort
+        : (supportedEfforts.find((option) => option.value === "high")?.value ??
+          supportedEfforts[0]?.value ??
+          "");
+      setModel(formatCodexModelSelection(nextModel, nextEffort));
+      setIsCustomModelEditing(false);
+      return;
+    }
     applySelection(
       selectionOnModelDropdownChange(selection, {
         nextValue,
@@ -796,7 +835,7 @@ export function AgentInstanceEditDialog({
               ? systemPrompt.trim() || null
               : undefined,
         model:
-          linkedPersona != null
+          linkedPersona != null && !isCodexTaskBound
             ? undefined
             : normalizedModel !== (agent.model ?? null)
               ? normalizedModel
@@ -929,10 +968,10 @@ export function AgentInstanceEditDialog({
     selectValue: modelSelectValue,
     showCustomInput: showCustomModelInput,
   } = relayMeshModelPickerState({
-    discoveredOptions: discoveredModelOptions,
+    discoveredOptions: modelOptionsForPicker,
     fallbackOptions: [{ id: "", label: inheritedModelLabel }],
     isCustomEditing: isCustomModelEditing,
-    model,
+    model: isCodexTaskBound ? codexModelSelection.model : model,
     provider: providerForDiscovery,
   });
   const modelDropdownOptions = buildModelDropdownOptions({
@@ -1316,6 +1355,39 @@ export function AgentInstanceEditDialog({
                 </p>
               ) : null}
             </div>
+
+            {isCodexTaskBound && codexModelSelection.model ? (
+              <div className="space-y-1.5">
+                <label
+                  className="text-sm font-medium text-foreground"
+                  htmlFor="edit-agent-codex-reasoning-effort"
+                >
+                  Reasoning effort
+                </label>
+                <PersonaDropdownField
+                  disabled={
+                    updateMutation.isPending ||
+                    codexReasoningOptions.length === 0
+                  }
+                  id="edit-agent-codex-reasoning-effort"
+                  onValueChange={(effort) =>
+                    setModel(
+                      formatCodexModelSelection(
+                        codexModelSelection.model,
+                        effort,
+                      ),
+                    )
+                  }
+                  options={codexReasoningOptions}
+                  placeholder="Runtime default"
+                  value={codexModelSelection.effort}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Applied to new turns in this imported Codex task after the
+                  agent restarts.
+                </p>
+              </div>
+            ) : null}
 
             <AgentAiDefaultsNotice
               onEditDefaults={() => setAiDefaultsOpen(true)}

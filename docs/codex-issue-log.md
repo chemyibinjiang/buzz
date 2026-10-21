@@ -508,3 +508,11 @@
 - 处理：将 Desktop、Tauri 和 updater 版本统一更新为 `0.5.21`，在根更新日志与应用内最近十日更新日志中记录主要变化；使用本地 updater 私钥生成带 Tauri updater 签名的 Windows NSIS 安装包。创建并推送 `buzz-codex-lab-v0.5.21` 标签，发布非草稿、非预发布的 GitHub Release；滚动通道 `buzz-codex-lab-latest` 更新为 `0.5.21`，并按保留策略仅留下当前 `0.5.21`、前一版 `0.5.20` 及 `latest.json`，未导出 zip。
 - 验证：Desktop TypeScript typecheck、目标 Biome、`startupChangelog.test.mjs` 3/3、Tauri `cargo check` 和 `git diff --check` 通过；本地安装包 updater 签名验证通过。安装包大小 `230405552` 字节，SHA-256 为 `1af4bdb411cfcf5d1ad7ce33d0198ed4fee745bff329d509aae9edf10658893b`。在线 `latest.json` 回读版本为 `0.5.21`，下载 URL 指向 `Buzz-Codex-Lab_0.5.21_db2ac881cfe1_x64-setup.exe`，线上签名与本地产物一致。正式 Release 为 `https://github.com/chemyibinjiang/buzz/releases/tag/buzz-codex-lab-v0.5.21`，状态为 `isDraft=false`、`isPrerelease=false`。
 - 版本/提交：Buzz Codex Lab `0.5.21`，发布提交 `db2ac881cfe1`；本条发布记录随后提交到 `Lin/develop`，版本标签继续固定指向发布提交。
+
+## 2026-10-21：Codex 导入 Agent 无法清晰选择推理等级且保存不生效
+
+- 现象：Codex task 导入的 Agent 编辑界面把普通模型和 `high`、`xhigh`、`max` 等推理等级混在一个很长的 Model 列表里，前部只看到不带等级的模型；即使选中带等级的条目并保存，重新运行时仍使用 task 原来的模型与推理等级。
+- 诊断：Codex ACP 的真实可切换 ID 是 `model[effort]`，但 Desktop 同时把 stable config 中不带等级的基础模型排在列表顶部，没有为 reasoning effort 提供独立控制。更关键的是，task-bound Agent 启动时由设备本地 `CodexTaskBinding.model` 覆盖普通 `ManagedAgentRecord.model`；编辑保存只更新 record，并且带有 Agent definition 链接的 task Agent 还会完全省略 model 写入，因此所选值无法进入实际启动配置。
+- 处理：Codex task 编辑器将基础模型与 Reasoning effort 拆成两个选择框，并从 ACP 返回的组合 ID 动态生成该模型真实支持的等级，明确显示 `xhigh (extra high)`；保存时仍写入 Codex ACP 要求的规范 `model[effort]`。task-bound Agent 即使链接了 Agent definition 也允许保存 task 专属模型，并同步更新设备本地 task binding；binding 写入失败时回滚普通 Agent record，避免两个配置源再次分叉。
+- 验证：直接运行本机 Codex ACP `models --json`，确认 stable 基础模型与 unstable `model[effort]` 组合同时返回，并包含 `high`、`xhigh`、`max`、`ultra` 等实际能力。新增前端纯函数回归 3/3 通过，覆盖组合 ID 拆装、基础模型去重和 `xhigh (extra high)` 等等级排序；Tauri `codex_tasks::tests` 16/16 通过，覆盖 task binding 从 `gpt-5.6-sol[high]` 更新为 `gpt-5.6-sol[xhigh]`。Desktop TypeScript typecheck、目标 Biome、文本字号门禁、Rustfmt、Tauri `cargo check` 与 `git diff --check` 通过；仅有仓库既有 unused 警告。
+- 版本/提交：Buzz Codex Lab `0.5.21` 后续测试版，`Lin/develop`，`fix(desktop): persist Codex task reasoning effort`。

@@ -217,6 +217,13 @@ with a TypeScript lookup table or an id comparison in a component.
    workspace, app-server URL, SSH configuration, or credentials. Remote cards
    must be derived from verified managed-directory rows (`managedDefinition`),
    not arbitrary profiles whose NIP-OA owner happens to match the current user.
+16. **Codex task model choices include reasoning effort and persist in the
+    task binding.** Codex ACP exposes model IDs as `model[effort]` (for example
+    `gpt-5.6-sol[xhigh]`). The imported-task editor renders model and reasoning
+    effort as separate controls for clarity, but persists the canonical combined
+    ID. A task binding outranks the ordinary record model at spawn, so edits to a
+    task-bound Agent must update the device-local binding as well as the record;
+    writing only `ManagedAgentRecord.model` creates a UI value that never runs.
 
 ## The tests that enforce this
 
