@@ -530,5 +530,5 @@
 - 现象/需求：其他用户无法从资料页向另一位用户的 Agent 发起私聊，希望由 Agent 所有者单独控制是否开放。
 - 诊断：ACP 已支持 `allow_non_owner_dm`，编辑器也已有本机配置，但公开的 owner 签名 kind:30177 定义没有发布该权限，同账户入站同步也没有应用它；资料页 Message 入口仍只允许所有者使用。Relay 已支持创建私聊及向 Agent 推送新会话成员关系，不需要新增服务端接口。
 - 处理：公开投影发布明确的开启/关闭值，同步到同账户配置；仅信任经过 NIP-OA 所有者验证的定义，旧客户端缺省不授予公共私聊权限，入站旧定义不覆盖已有本机设置，未就绪 Agent 不公布开放权限。资料页按该权限开放 Message，保留编辑、语音和记忆管理的原有权限边界。编辑器明确说明允许其他用户私聊及运行中 Agent 需要重启。
-- 验证：ACP 私聊权限测试 5/5、Tauri 私聊相关测试 6/6、Agent 目录转换测试 6/6、前端权限 helper 测试 2/2、资料页 Playwright 测试 3/3 通过，覆盖关闭时隐藏 Message、开启后进入正确 Agent 的私聊、最新关闭定义优先于旧开启定义及普通用户快捷操作回归；TypeScript、目标 Biome、文本字号门禁、Rustfmt、E2E build 和 diff 空白检查通过。尚未进行真实双账户消息往返测试；本轮未修改 Relay、未生成安装包。
-- 版本/提交：Buzz Codex Lab `0.5.21` 工作区，基线 `e6835349`，待提交。
+- 验证：ACP 私聊权限测试 5/5、Tauri 私聊相关测试 6/6、Agent 目录转换测试 6/6、前端权限 helper 测试 2/2、资料页 Playwright 测试 3/3 通过，覆盖关闭时隐藏 Message、开启后进入正确 Agent 的私聊、最新关闭定义优先于旧开启定义及普通用户快捷操作回归；TypeScript、目标 Biome、文本字号门禁、Rustfmt、E2E build 和 diff 空白检查通过。尚未进行真实双账户消息往返测试；本轮未修改 Relay。
+- 版本/提交：Buzz Codex Lab `0.5.21`，功能提交 `cd1d11e8`；缓存构建安装包 [Buzz-Codex-Lab_0.5.21_cd1d11e813b8_x64-setup.exe](D:/BuzzCodexLabRelease/Buzz-Codex-Lab_0.5.21_cd1d11e813b8_x64-setup.exe)，大小 230211195 字节，SHA-256 `469551101707a1de44b3b4e5d2c4d353cdadb4e3627bcdda23c7b1eef9daa061`。安装包未启用 updater 签名。
