@@ -104,6 +104,7 @@ fn policy_for(path: &str) -> MaskPolicy {
         //   session_title                       — display chrome
         //   model / provider                    — catalog ids
         //   respond_to / respond_to_allowlist   — gate mode + pubkeys
+        //   allow_non_owner_dm                 — explicit DM access policy
         //   idle_timeout_seconds / max_turn_duration_seconds / parallelism
         //                                       — numeric limits
         //   adapter_availability                — an enum variant name

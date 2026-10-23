@@ -286,6 +286,9 @@ pub fn build_managed_agent_summary(
             &teams,
             &key.relay_url,
             global_config,
+            codex_task_binding
+                .as_ref()
+                .and_then(|binding| binding.model.as_deref()),
         );
         (runtime, current)
     });

@@ -532,3 +532,11 @@
 - 处理：公开投影发布明确的开启/关闭值，同步到同账户配置；仅信任经过 NIP-OA 所有者验证的定义，旧客户端缺省不授予公共私聊权限，入站旧定义不覆盖已有本机设置，未就绪 Agent 不公布开放权限。资料页按该权限开放 Message，保留编辑、语音和记忆管理的原有权限边界。编辑器明确说明允许其他用户私聊及运行中 Agent 需要重启。
 - 验证：ACP 私聊权限测试 5/5、Tauri 私聊相关测试 6/6、Agent 目录转换测试 6/6、前端权限 helper 测试 2/2、资料页 Playwright 测试 3/3 通过，覆盖关闭时隐藏 Message、开启后进入正确 Agent 的私聊、最新关闭定义优先于旧开启定义及普通用户快捷操作回归；TypeScript、目标 Biome、文本字号门禁、Rustfmt、E2E build 和 diff 空白检查通过。尚未进行真实双账户消息往返测试；本轮未修改 Relay。
 - 版本/提交：Buzz Codex Lab `0.5.21`，功能提交 `cd1d11e8`；缓存构建安装包 [Buzz-Codex-Lab_0.5.21_cd1d11e813b8_x64-setup.exe](D:/BuzzCodexLabRelease/Buzz-Codex-Lab_0.5.21_cd1d11e813b8_x64-setup.exe)，大小 230211195 字节，SHA-256 `469551101707a1de44b3b4e5d2c4d353cdadb4e3627bcdda23c7b1eef9daa061`。安装包未启用 updater 签名。
+
+## 2026-10-23：Codex task Agent 重启后仍持续显示 Restart required
+
+- 现象：Windows Agents 页面中在线的 Codex task Agent 一直显示 Restart required，手动重启后状态仍未清除；截图中 Agent 的 task 模型包含 `gpt-5.6-sol[xhigh]`。
+- 诊断：Agent 启动时，Desktop 从设备本地 `CodexTaskBinding.model` 覆盖普通模型配置，并把覆盖后的模型写入实际子进程和启动快照；但 Restart required 的 prospective 快照计算漏了 task binding 覆盖，持续拿普通 persona/instance 模型比较。只要二者不同（例如 `xhigh` 与 `high`），每次重启后的启动值仍会与比较值不同，徽标因此永久存在。此外，新增的 `allow_non_owner_dm` 环境设置此前没有纳入启动快照，无法正确报告这项配置变化。
+- 处理：summary 快照比较现在使用与启动相同的 task binding 模型覆盖；启动快照同时记录 `allow_non_owner_dm`，使该设置变更会提示重启、重启应用新值后差异清除。添加了 task 模型一致性和私聊权限漂移回归测试，并将新快照字段加入逐字段 diff 覆盖。
+- 验证：专门回归 `task_binding_model_is_used_by_spawn_and_restart_snapshots` 通过；相关快照测试 64 项通过。该测试集合另有 1 项既有 Windows 测试 `no_sentinel_reaches_the_owning_process_debug_output` 因无法启动占位进程（`program not found`）失败，非本次断言或实现导致。尚未在用户设备实测；不涉及 Relay。
+- 版本/提交：Buzz Codex Lab `0.5.21`，基线 `46c36ddb`，待提交；未生成新安装包。

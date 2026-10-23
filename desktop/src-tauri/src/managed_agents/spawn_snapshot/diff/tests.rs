@@ -24,6 +24,7 @@ fn base() -> SpawnConfigSnapshot {
         session_title: Some("Fizz".into()),
         auth_tag: Some("tag-abcdefgh".into()),
         respond_to: "owner-only".into(),
+        allow_non_owner_dm: false,
         respond_to_allowlist: Some(vec!["a".repeat(64)]),
         idle_timeout_seconds: Some(600),
         max_turn_duration_seconds: Some(7200),
@@ -64,6 +65,7 @@ fn mutations() -> Vec<Mutation> {
         ("session_title", |s| s.session_title = None),
         ("auth_tag", |s| s.auth_tag = None),
         ("respond_to", |s| s.respond_to = "anyone".into()),
+        ("allow_non_owner_dm", |s| s.allow_non_owner_dm = true),
         ("respond_to_allowlist", |s| s.respond_to_allowlist = None),
         ("idle_timeout_seconds", |s| s.idle_timeout_seconds = None),
         ("max_turn_duration_seconds", |s| {

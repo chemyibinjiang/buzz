@@ -12,7 +12,64 @@ fn snapshot(
     workspace_relay: &str,
     global: &GlobalAgentConfig,
 ) -> serde_json::Value {
-    prospective_spawn_config_snapshot(record, personas, teams, workspace_relay, global).canonical()
+    prospective_spawn_config_snapshot(record, personas, teams, workspace_relay, global, None)
+        .canonical()
+}
+
+#[test]
+fn task_binding_model_is_used_by_spawn_and_restart_snapshots() {
+    let mut rec = record();
+    rec.model = Some("gpt-5.6-sol[high]".into());
+    let task_model = "gpt-5.6-sol[xhigh]";
+    let snapshot = prospective_spawn_config_snapshot(
+        &rec,
+        &[],
+        &[],
+        "wss://ws.example",
+        &Default::default(),
+        Some(task_model),
+    );
+    assert_eq!(snapshot.model.as_deref(), Some(task_model));
+
+    let stamped = SpawnConfigSnapshot::from_inputs(SpawnConfigInputs {
+        record: &rec,
+        descriptor: &crate::managed_agents::resolve_effective_harness_descriptor(
+            &rec,
+            &[],
+            &Default::default(),
+        )
+        .unwrap(),
+        relay_url: "wss://ws.example",
+        team_instructions: None,
+        system_prompt: rec.system_prompt.as_deref(),
+        model: Some(task_model),
+        provider: None,
+    });
+    let entries = eligible_restart_diff(
+        false,
+        Some(TrackedSpawnState {
+            stamped: &stamped,
+            current: &snapshot,
+            stamped_availability: None,
+            current_availability: None,
+        }),
+    );
+    assert!(
+        entries.is_empty(),
+        "task model must not keep restart drift: {entries:?}"
+    );
+}
+
+#[test]
+fn non_owner_dm_permission_is_part_of_spawn_snapshot() {
+    let mut rec = record();
+    let before = snapshot(&rec, &[], &[], "wss://ws.example", &Default::default());
+    rec.allow_non_owner_dm = true;
+    let after = snapshot(&rec, &[], &[], "wss://ws.example", &Default::default());
+    assert_ne!(
+        before, after,
+        "DM access changes the spawned ACP environment"
+    );
 }
 
 fn record() -> ManagedAgentRecord {

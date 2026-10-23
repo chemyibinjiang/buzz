@@ -116,6 +116,8 @@ pub(crate) struct SpawnConfigSnapshot {
     pub session_title: Option<String>,
     pub auth_tag: Option<String>,
     pub respond_to: String,
+    /// Explicit direct-message access sent to `buzz-acp` at spawn.
+    pub allow_non_owner_dm: bool,
     /// `None` outside allowlist mode — spawn sets
     /// `BUZZ_ACP_RESPOND_TO_ALLOWLIST` only there, so edits to a dormant list
     /// must not badge. Normalized (trim/lowercase/dedup) as the env receives
@@ -154,6 +156,7 @@ impl SpawnConfigSnapshot {
                 .flatten(),
             auth_tag: record.auth_tag.clone(),
             respond_to: record.respond_to.as_str().to_string(),
+            allow_non_owner_dm: record.allow_non_owner_dm,
             respond_to_allowlist: (record.respond_to == super::types::RespondTo::Allowlist).then(
                 || {
                     // A list spawn would reject is captured raw: the stamped
@@ -200,7 +203,8 @@ impl std::fmt::Debug for SpawnConfigSnapshot {
 
 /// Snapshot the effective spawn configuration `record` would get if it were
 /// started right now under the current `personas`/`teams`/`global`, resolving
-/// a blank record relay against `workspace_relay`.
+/// a blank record relay against `workspace_relay`. `task_binding_model` must
+/// be the same device-local override supplied to the actual spawn path.
 ///
 /// Pure — no `AppHandle`, no disk, no keyring. This is the *prospective* side
 /// of the comparison; the stamped side is built at spawn from the values that
@@ -211,6 +215,7 @@ pub(crate) fn prospective_spawn_config_snapshot(
     teams: &[TeamRecord],
     workspace_relay: &str,
     global: &GlobalAgentConfig,
+    task_binding_model: Option<&str>,
 ) -> SpawnConfigSnapshot {
     // Prospective re-snapshot: apply the same `apply_persona_snapshot` the
     // start/restore paths run right before spawning, so this describes what a
@@ -243,12 +248,18 @@ pub(crate) fn prospective_spawn_config_snapshot(
     // definition) resolves as if all three were absent: `spawn_agent_child`
     // refuses to spawn an orphan regardless, and `eligible_restart_diff`
     // suppresses the badge for one.
-    let (prompt, model, provider) = match resolve_effective_config(record, personas, global) {
+    let (prompt, mut model, provider) = match resolve_effective_config(record, personas, global) {
         EffectiveConfigResult::Resolved(cfg) => {
             (cfg.system_prompt.value, cfg.model.value, cfg.provider.value)
         }
         EffectiveConfigResult::OrphanedInstance { .. } => (None, None, None),
     };
+    if let Some(task_model) = task_binding_model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        model = Some(task_model.to_string());
+    }
 
     SpawnConfigSnapshot::from_inputs(SpawnConfigInputs {
         record,
