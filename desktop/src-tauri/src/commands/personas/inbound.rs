@@ -400,7 +400,7 @@ fn apply_inbound_persona(personas: &mut Vec<AgentDefinition>, inbound: AgentDefi
 ///
 /// Matches the local record whose `pubkey` equals the event's d-tag (the d-tag
 /// IS the agent pubkey — see `build_agent_event`). On match, overwrite ONLY the
-/// 10 projected fields; every secret (`private_key_nsec`, `auth_tag`,
+/// public projected fields; every secret (`private_key_nsec`, `auth_tag`,
 /// `env_vars`, `backend`), the harness pins (`agent_command`,
 /// `agent_command_override`), and all runtime/local fields are preserved
 /// untouched. The projection type carries none of them, so they cannot be
@@ -434,6 +434,9 @@ fn apply_inbound_managed_agent(
         local.parallelism = inbound.parallelism;
         local.respond_to = inbound.respond_to;
         local.respond_to_allowlist = inbound.respond_to_allowlist;
+        if let Some(allow_non_owner_dm) = inbound.allow_non_owner_dm {
+            local.allow_non_owner_dm = allow_non_owner_dm;
+        }
     }
 }
 

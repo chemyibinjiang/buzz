@@ -62,6 +62,7 @@ type MockRelayAgentSeed = {
   personaId?: string | null;
   codexTask?: boolean;
   managedDefinition?: boolean;
+  allowNonOwnerDm?: boolean;
   capabilities?: string[];
   respondTo?: "owner-only" | "allowlist" | "anyone";
   respondToAllowlist?: string[];

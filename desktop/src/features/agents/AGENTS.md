@@ -225,6 +225,15 @@ with a TypeScript lookup table or an id comparison in a component.
     task-bound Agent must update the device-local binding as well as the record;
     writing only `ManagedAgentRecord.model` creates a UI value that never runs.
 
+Non-owner direct messages are an explicit per-instance opt-in, independent of
+channel `respondTo` access (except `nobody`, which disables all replies). Publish
+`allow_non_owner_dm` in the owner-signed kind:30177 projection, including explicit
+false for revocation; legacy absence preserves existing local settings during
+inbound sync and grants no public DM access. NotReady projections disable it.
+Profile Message actions may use only the verified managed directory permission;
+this must not expand huddle, editing, memory, or other owner privileges. Runtime
+permission changes require restarting the running agent.
+
 ## The tests that enforce this
 
 - `lib/agentConfigCore.test.mjs` — field model per harness × scope, clearing

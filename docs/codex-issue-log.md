@@ -516,3 +516,19 @@
 - 处理：Codex task 编辑器将基础模型与 Reasoning effort 拆成两个选择框，并从 ACP 返回的组合 ID 动态生成该模型真实支持的等级，明确显示 `xhigh (extra high)`；保存时仍写入 Codex ACP 要求的规范 `model[effort]`。task-bound Agent 即使链接了 Agent definition 也允许保存 task 专属模型，并同步更新设备本地 task binding；binding 写入失败时回滚普通 Agent record，避免两个配置源再次分叉。
 - 验证：直接运行本机 Codex ACP `models --json`，确认 stable 基础模型与 unstable `model[effort]` 组合同时返回，并包含 `high`、`xhigh`、`max`、`ultra` 等实际能力。新增前端纯函数回归 3/3 通过，覆盖组合 ID 拆装、基础模型去重和 `xhigh (extra high)` 等等级排序；Tauri `codex_tasks::tests` 16/16 通过，覆盖 task binding 从 `gpt-5.6-sol[high]` 更新为 `gpt-5.6-sol[xhigh]`。Desktop TypeScript typecheck、目标 Biome、文本字号门禁、Rustfmt、Tauri `cargo check` 与 `git diff --check` 通过；仅有仓库既有 unused 警告。
 - 版本/提交：Buzz Codex Lab `0.5.21` 测试包，功能提交 `73950952289051de82492f7243f5b17d8e855202`；测试安装包 `Buzz-Codex-Lab_0.5.21_739509522890_x64-setup.exe`，SHA-256 `494fe8d59aca33f08759872c2b2c4cb461938ee87ce4797df730e58d88e23dc6`，使用 D 盘增量缓存构建并通过 updater 签名校验。
+
+## 2026-10-23：Agent 显示长会话提醒并因服务过载中断输出
+
+- 现象：用户截图同时显示长 thread 多次 compaction 可能降低准确性的提醒，以及 `stream disconnected before completion: Our servers are currently overloaded. Please try again later.`。
+- 诊断：前者是会话上下文压缩提醒；后者是模型请求流未正常完成且服务返回过载信息，两条提示不能直接建立因果关系。仅凭截图无法确定过载发生在 OpenAI 还是用户配置的兼容 API/中转服务，也无法确认 HTTP 状态码或是否为持续故障；没有证据指向 Buzz Relay 或本次模型选择修复。
+- 处理：建议稍后重试；若任务执行过文件修改或命令，先核对执行结果再重试。长期使用的会话可通过总结交接后创建新 task 减少上下文压缩负担。持续过载需核对实际请求服务及日志；本轮未修改产品代码或服务配置。
+- 验证：读取截图并核对 OpenAI 官方 error-codes 文档，官方将模型临时过载列为可等待后重试的服务错误；未获取故障设备 runtime/API 日志，未复现服务过载。
+- 版本/提交：用户截图未显示版本；本条为诊断记录，未生成安装包。
+
+## 2026-10-23：允许其他用户私聊已明确开放权限的 Agent
+
+- 现象/需求：其他用户无法从资料页向另一位用户的 Agent 发起私聊，希望由 Agent 所有者单独控制是否开放。
+- 诊断：ACP 已支持 `allow_non_owner_dm`，编辑器也已有本机配置，但公开的 owner 签名 kind:30177 定义没有发布该权限，同账户入站同步也没有应用它；资料页 Message 入口仍只允许所有者使用。Relay 已支持创建私聊及向 Agent 推送新会话成员关系，不需要新增服务端接口。
+- 处理：公开投影发布明确的开启/关闭值，同步到同账户配置；仅信任经过 NIP-OA 所有者验证的定义，旧客户端缺省不授予公共私聊权限，入站旧定义不覆盖已有本机设置，未就绪 Agent 不公布开放权限。资料页按该权限开放 Message，保留编辑、语音和记忆管理的原有权限边界。编辑器明确说明允许其他用户私聊及运行中 Agent 需要重启。
+- 验证：ACP 私聊权限测试 5/5、Tauri 私聊相关测试 6/6、Agent 目录转换测试 6/6、前端权限 helper 测试 2/2、资料页 Playwright 测试 3/3 通过，覆盖关闭时隐藏 Message、开启后进入正确 Agent 的私聊、最新关闭定义优先于旧开启定义及普通用户快捷操作回归；TypeScript、目标 Biome、文本字号门禁、Rustfmt、E2E build 和 diff 空白检查通过。尚未进行真实双账户消息往返测试；本轮未修改 Relay、未生成安装包。
+- 版本/提交：Buzz Codex Lab `0.5.21` 工作区，基线 `e6835349`，待提交。

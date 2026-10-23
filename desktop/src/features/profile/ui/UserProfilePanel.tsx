@@ -81,6 +81,7 @@ import {
   useRetainedPersona,
 } from "@/features/profile/ui/UserProfilePanelUtils";
 import { useProfileInteractionActions } from "@/features/profile/ui/useProfileInteractionActions";
+import { allowsNonOwnerAgentDm } from "@/features/profile/lib/agentDirectMessageAccess";
 import { useUserStatusQuery } from "@/features/user-status/hooks";
 import { useOpenAgentActivity } from "@/features/agents/useOpenAgentActivity";
 import { useEscapeKey } from "@/shared/hooks/useEscapeKey";
@@ -393,6 +394,7 @@ export function UserProfilePanel({
     isStartingHuddle,
     pendingAction,
   } = useProfileInteractionActions({
+    allowNonOwnerAgentDm: allowsNonOwnerAgentDm(relayAgent),
     effectivePubkey,
     enabled: onOpenDm !== undefined,
     isBot,

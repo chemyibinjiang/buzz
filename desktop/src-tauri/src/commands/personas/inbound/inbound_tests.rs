@@ -703,6 +703,19 @@ fn inbound_managed_agent_content(
         parallelism: 1,
         respond_to: crate::managed_agents::RespondTo::OwnerOnly,
         respond_to_allowlist: vec![],
+        allow_non_owner_dm: None,
+    }
+}
+
+#[test]
+fn inbound_dm_permission_supports_enable_revoke_and_legacy_preservation() {
+    let mut agents = vec![local_agent()];
+    for (inbound_value, expected) in [(Some(true), true), (None, true), (Some(false), false)] {
+        let mut inbound = inbound_managed_agent_content("Agent", None, None);
+        inbound.allow_non_owner_dm = inbound_value;
+        apply_inbound_managed_agent(&mut agents, AGENT_PUBKEY, inbound);
+        assert_eq!(agents[0].allow_non_owner_dm, expected);
+        assert_eq!(agents[0].private_key_nsec, "nsec1localsecret");
     }
 }
 

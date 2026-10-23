@@ -115,6 +115,7 @@ type RawRelayAgent = {
   status: RelayAgent["status"];
   respond_to?: RelayAgent["respondTo"];
   respond_to_allowlist?: string[];
+  allow_non_owner_dm?: boolean;
 };
 import type { RestartDiffEntry as RawRestartDiffEntry } from "./restartDiff";
 export type RawManagedAgent = {
@@ -683,6 +684,7 @@ function fromRawRelayAgent(agent: RawRelayAgent): RelayAgent {
     status: agent.status,
     respondTo: agent.respond_to ?? null,
     respondToAllowlist: agent.respond_to_allowlist ?? [],
+    allowNonOwnerDm: agent.allow_non_owner_dm ?? false,
   };
 }
 

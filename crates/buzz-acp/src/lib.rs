@@ -229,9 +229,9 @@ async fn is_owner_or_sibling(
 /// message looks like a mention and would fire a turn. Combined with
 /// agent-initiated DMs (the agent can be asked to DM a third party), that
 /// turns `anyone`/`allowlist` modes into transitive access grants: whoever
-/// lands in a DM with the agent can prompt it. To close that hole, when
-/// `is_dm` is true only the owner and cryptographically verified same-owner
-/// siblings may fire a turn — the explicit allowlist and `anyone` mode do
+/// lands in a DM with the agent can prompt it. Unless `allow_non_owner_dm`
+/// is explicitly enabled, DMs admit only the owner and cryptographically
+/// verified same-owner siblings — the explicit allowlist and `anyone` mode do
 /// NOT apply inside DMs. `Nobody` still drops everything. Callers must
 /// resolve `is_dm` fail-closed: unknown channel type ⇒ treat as DM.
 async fn author_allowed_with_dm(

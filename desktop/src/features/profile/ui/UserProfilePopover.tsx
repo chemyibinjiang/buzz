@@ -27,6 +27,7 @@ import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { useProfileInteractionActions } from "@/features/profile/ui/useProfileInteractionActions";
+import { allowsNonOwnerAgentDm } from "@/features/profile/lib/agentDirectMessageAccess";
 
 import { Popover, PopoverAnchor, PopoverContent } from "@/shared/ui/popover";
 import { BotIdenticon } from "@/features/messages/ui/BotIdenticon";
@@ -208,7 +209,7 @@ export function UserProfilePopover({
   const showMessageAction =
     showProfileActions &&
     !isAgentClassificationPending &&
-    (!isBotProfile || viewerIsOwner);
+    (!isBotProfile || viewerIsOwner || allowsNonOwnerAgentDm(relayAgent));
   const showAnyProfileActions =
     showHumanProfileActions || showMessageAction || showHuddleAction;
   const canViewActivity =

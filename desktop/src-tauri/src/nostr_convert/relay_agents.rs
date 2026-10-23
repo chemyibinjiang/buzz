@@ -87,6 +87,7 @@ pub(crate) fn relay_agents_from_events(
         agent.codex_task = false;
         agent.codex_task_key = None;
         agent.managed_definition = false;
+        agent.allow_non_owner_dm = false;
     }
     let mut agent_indexes: HashMap<String, usize> = agents
         .iter()
@@ -173,6 +174,7 @@ pub(crate) fn relay_agents_from_events(
             agent.managed_definition = true;
             agent.respond_to = Some(content.respond_to);
             agent.respond_to_allowlist = content.respond_to_allowlist;
+            agent.allow_non_owner_dm = content.allow_non_owner_dm.unwrap_or(false);
             continue;
         }
 
@@ -196,6 +198,7 @@ pub(crate) fn relay_agents_from_events(
             status: "offline".to_string(),
             respond_to: Some(content.respond_to),
             respond_to_allowlist: content.respond_to_allowlist,
+            allow_non_owner_dm: content.allow_non_owner_dm.unwrap_or(false),
         });
     }
 
@@ -229,6 +232,7 @@ pub(crate) fn relay_agents_from_events(
             status: "offline".to_string(),
             respond_to: None,
             respond_to_allowlist: Vec::new(),
+            allow_non_owner_dm: false,
         });
     }
 
@@ -288,10 +292,67 @@ mod tests {
         assert!(agents[0].managed_definition);
         assert!(!agents[0].codex_task);
         assert!(agents[0].codex_task_key.is_none());
+        assert!(!agents[0].allow_non_owner_dm);
         assert_eq!(
             agents[0].respond_to,
             Some(crate::managed_agents::RespondTo::Anyone)
         );
+    }
+
+    #[test]
+    fn dm_access_requires_verified_owner_and_latest_explicit_permission() {
+        let agent = Keys::generate();
+        let owner = Keys::generate();
+        let stranger = Keys::generate();
+        let pubkey = agent.public_key().to_hex();
+        let profile = oa_profile_event_for(&agent, &owner, "{}");
+        let directory = EventBuilder::new(
+            Kind::Custom(KIND_AGENT_PROFILE as u16),
+            r#"{"name":"Scout","allow_non_owner_dm":true}"#,
+        )
+        .sign_with_keys(&agent)
+        .unwrap();
+        let forged = managed_agent_event(
+            &pubkey,
+            &stranger,
+            r#"{"name":"Scout","parallelism":1,"respond_to":"owner-only","allow_non_owner_dm":true}"#,
+        );
+        let rows =
+            relay_agents_from_events(&[directory.clone(), forged], std::slice::from_ref(&profile));
+        assert!(!rows[0].allow_non_owner_dm);
+        for allowed in [true, false] {
+            let content = serde_json::json!({
+                "name": "Scout", "parallelism": 1,
+                "respond_to": "owner-only", "allow_non_owner_dm": allowed,
+            });
+            let managed = managed_agent_event(&pubkey, &owner, &content.to_string());
+            // Cover both a managed-only row and the merge with a runtime profile.
+            for events in [vec![managed.clone()], vec![directory.clone(), managed]] {
+                let rows = relay_agents_from_events(&events, std::slice::from_ref(&profile));
+                assert!(rows[0].managed_definition);
+                assert_eq!(rows[0].allow_non_owner_dm, allowed);
+            }
+        }
+        let definition = |allowed, timestamp| {
+            let content = serde_json::json!({
+                "name": "Scout", "parallelism": 1,
+                "respond_to": "owner-only", "allow_non_owner_dm": allowed,
+            });
+            EventBuilder::new(Kind::Custom(KIND_MANAGED_AGENT as u16), content.to_string())
+                .tags([Tag::parse(["d", pubkey.as_str()]).unwrap()])
+                .custom_created_at(nostr::Timestamp::from(timestamp))
+                .sign_with_keys(&owner)
+                .unwrap()
+        };
+        let granted = definition(true, 100);
+        let revoked = definition(false, 101);
+        for events in [
+            vec![granted.clone(), revoked.clone()],
+            vec![revoked, granted],
+        ] {
+            let rows = relay_agents_from_events(&events, std::slice::from_ref(&profile));
+            assert!(!rows[0].allow_non_owner_dm);
+        }
     }
 
     #[test]

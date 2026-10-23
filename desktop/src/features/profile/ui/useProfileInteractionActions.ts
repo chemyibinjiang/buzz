@@ -69,6 +69,7 @@ function findCachedOneToOneDm(
 }
 
 export function useProfileInteractionActions({
+  allowNonOwnerAgentDm = false,
   availability,
   effectivePubkey,
   enabled,
@@ -78,6 +79,7 @@ export function useProfileInteractionActions({
   onClose,
   viewerIsOwner,
 }: {
+  allowNonOwnerAgentDm?: boolean;
   availability?: ProfileInteractionAvailability;
   effectivePubkey: string | null;
   enabled: boolean;
@@ -102,8 +104,10 @@ export function useProfileInteractionActions({
   const canWave = canInteract && (availability?.wave ?? !isBot);
   const canMessage =
     canInteract &&
-    (availability?.message ?? (!isBot || viewerIsOwner === true));
-  const canHuddle = canInteract && (availability?.huddle ?? canMessage);
+    (availability?.message ??
+      (!isBot || viewerIsOwner === true || allowNonOwnerAgentDm));
+  const canHuddle =
+    canInteract && (availability?.huddle ?? (!isBot || viewerIsOwner === true));
   const selfProfileQuery = useProfileQuery(enabled && canWave);
 
   React.useEffect(() => {

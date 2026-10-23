@@ -176,6 +176,65 @@ test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
 });
 
+for (const allowNonOwnerDm of [false, true]) {
+  test(`another owner's agent DM permission ${allowNonOwnerDm ? "opens a private conversation" : "hides the message action"}`, async ({
+    page,
+  }) => {
+    const pubkey = "a".repeat(64);
+    await installMockBridge(page, {
+      searchProfiles: [
+        {
+          pubkey,
+          displayName: "Shared Scout",
+          isAgent: true,
+          ownerPubkey: TEST_IDENTITIES.alice.pubkey,
+        },
+      ],
+      relayAgents: [
+        {
+          pubkey,
+          name: "Shared Scout",
+          ownerPubkey: TEST_IDENTITIES.alice.pubkey,
+          managedDefinition: true,
+          respondTo: "owner-only",
+          allowNonOwnerDm,
+          channelNames: ["general"],
+        },
+      ],
+    });
+    await page.goto("/");
+    await page.getByTestId("channel-general").click();
+    await waitForMockLiveSubscription(page, "general");
+    await page.evaluate((pubkey) => {
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName: "general",
+        content: "Shared Scout DM check",
+        pubkey,
+      });
+    }, pubkey);
+    const row = page
+      .getByTestId("message-row")
+      .filter({ hasText: "Shared Scout DM check" });
+    await expect(row).toBeVisible();
+    await row.locator("button").first().click();
+    const panel = page.getByTestId("user-profile-panel");
+    await expect(panel).toBeVisible();
+    await expect(
+      panel.getByTestId("user-profile-header-edit-agent"),
+    ).toHaveCount(0);
+    await expect(panel.getByTestId("user-profile-huddle")).toHaveCount(0);
+    const messageAction = panel.getByTestId("user-profile-message");
+    if (!allowNonOwnerDm) {
+      await expect(messageAction).toHaveCount(0);
+      return;
+    }
+    await expect(messageAction).toBeVisible();
+    await messageAction.click();
+    await expect(page.getByTestId("chat-title")).toContainText("Shared Scout");
+    await expect(panel).toHaveCount(0);
+  });
+}
+
 test("profile panel shows communication actions as quick action tiles", async ({
   page,
 }) => {

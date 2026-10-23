@@ -119,6 +119,7 @@ export function PulseView({ currentPubkey }: PulseViewProps) {
           codexTask: Boolean(agent.codexTaskBinding),
           codexTaskKey: null,
           managedDefinition: false,
+          allowNonOwnerDm: false,
         });
       }
     }

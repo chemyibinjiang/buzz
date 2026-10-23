@@ -127,6 +127,7 @@ type MockRelayAgentSeed = {
   personaId?: string | null;
   codexTask?: boolean;
   managedDefinition?: boolean;
+  allowNonOwnerDm?: boolean;
   capabilities?: string[];
   respondTo?: RawRelayAgent["respond_to"];
   respondToAllowlist?: string[];
@@ -857,6 +858,7 @@ type RawRelayAgent = {
   codex_task?: boolean;
   codex_task_key?: string | null;
   managed_definition?: boolean;
+  allow_non_owner_dm?: boolean;
   agent_type: string;
   channels: string[];
   channel_ids: string[];
@@ -867,6 +869,7 @@ type RawRelayAgent = {
 };
 
 type RawManagedAgent = {
+  allow_non_owner_dm?: boolean;
   pubkey: string;
   name: string;
   codex_task_binding?: {
@@ -2347,6 +2350,7 @@ function resetMockRelayAgents(config?: E2eConfig) {
       persona_id: seed.personaId ?? null,
       codex_task: seed.codexTask ?? false,
       managed_definition: seed.managedDefinition ?? false,
+      allow_non_owner_dm: seed.allowNonOwnerDm ?? false,
       channels: channels.map((channel) => channel.name),
       channel_ids: channels.map((channel) => channel.id),
       capabilities: seed.capabilities ?? ["messages", "channels", "mcp"],
@@ -3693,6 +3697,7 @@ function syncMockRelayAgentsFromManagedAgents() {
         persona_id: agent.persona_id,
         codex_task: Boolean(agent.codex_task_binding),
         managed_definition: true,
+        allow_non_owner_dm: agent.allow_non_owner_dm ?? false,
         agent_type: agent.agent_command,
         channels: memberships.channels,
         channel_ids: memberships.channelIds,

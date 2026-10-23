@@ -283,6 +283,7 @@ export type RelayAgent = {
   status: "online" | "away" | "offline";
   respondTo: RespondToMode | null;
   respondToAllowlist: string[];
+  allowNonOwnerDm: boolean;
 };
 
 export type ManagedAgentRuntimeLifecycle =

@@ -8,6 +8,7 @@ fn relay_agent(
     deleted: bool,
 ) -> crate::managed_agents::RelayAgentInfo {
     crate::managed_agents::RelayAgentInfo {
+        allow_non_owner_dm: false,
         pubkey: pubkey.to_string(),
         name: "Task agent".to_string(),
         owner_pubkey: Some(owner.to_string()),

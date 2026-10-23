@@ -228,6 +228,9 @@ pub struct RelayAgentInfo {
     pub respond_to: Option<RespondTo>,
     #[serde(default)]
     pub respond_to_allowlist: Vec<String>,
+    /// Non-owner DM permission from the verified owner's managed definition.
+    #[serde(default)]
+    pub allow_non_owner_dm: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagedAgentRecord {

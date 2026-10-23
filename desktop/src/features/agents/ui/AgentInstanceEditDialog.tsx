@@ -1170,8 +1170,12 @@ export function AgentInstanceEditDialog({
                 onChange={(event) => setAllowNonOwnerDm(event.target.checked)}
                 type="checkbox"
               />
-              Allow non-owner users to trigger this agent in direct messages
+              Allow other users to message this agent privately
             </label>
+            <p className="text-xs text-muted-foreground">
+              Shows a Message button on this agent's profile for other community
+              members. Restart a running agent after changing this setting.
+            </p>
             <RunOnSummarySection backend={agent.backend} />
 
             {/* Provider (runtime) */}

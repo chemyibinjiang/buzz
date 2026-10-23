@@ -69,6 +69,10 @@ pub struct ManagedAgentEventContent {
     /// public keys, not secrets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub respond_to_allowlist: Vec<String>,
+    /// Explicit permission for non-owner direct messages. Absence identifies
+    /// older clients and must not erase a device's existing local setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_non_owner_dm: Option<bool>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -142,6 +146,7 @@ pub fn agent_event_content_with_task_key(
         parallelism: record.parallelism,
         respond_to: record.respond_to,
         respond_to_allowlist: record.respond_to_allowlist.clone(),
+        allow_non_owner_dm: Some(record.allow_non_owner_dm),
     }
 }
 
@@ -155,6 +160,7 @@ pub(crate) fn directory_record_for_readiness(
     ready: bool,
 ) -> ManagedAgentRecord {
     let mut projected = record.clone();
+    projected.allow_non_owner_dm = ready && record.allow_non_owner_dm;
     (projected.respond_to, projected.respond_to_allowlist) = directory_access_for_readiness(
         record.respond_to,
         record.respond_to_allowlist.clone(),
@@ -511,6 +517,38 @@ mod tests {
         let a = serde_json::to_string(&agent_event_content(&agent)).unwrap();
         let b = serde_json::to_string(&agent_event_content(&agent)).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn dm_permission_roundtrips_and_explicitly_revokes_access() {
+        let mut record = sample_agent();
+        for allowed in [true, false] {
+            record.allow_non_owner_dm = allowed;
+            let event = build_agent_event(&record)
+                .unwrap()
+                .sign_with_keys(&nostr::Keys::generate())
+                .unwrap();
+            let parsed = managed_agent_content_from_event(&event).unwrap();
+            assert_eq!(parsed.allow_non_owner_dm, Some(allowed));
+        }
+    }
+
+    #[test]
+    fn legacy_projection_has_unknown_dm_permission() {
+        let content: ManagedAgentEventContent = serde_json::from_value(serde_json::json!({
+            "name": "Legacy", "parallelism": 1, "respond_to": "anyone"
+        }))
+        .unwrap();
+        assert_eq!(content.allow_non_owner_dm, None);
+    }
+
+    #[test]
+    fn setup_agent_does_not_advertise_non_owner_dm_access() {
+        let mut record = sample_agent();
+        record.allow_non_owner_dm = true;
+        assert!(!directory_record_for_readiness(&record, false).allow_non_owner_dm);
+        assert!(directory_record_for_readiness(&record, true).allow_non_owner_dm);
+        assert!(record.allow_non_owner_dm);
     }
 
     /// Mutating only runtime fields must NOT change the projection — the
