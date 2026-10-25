@@ -539,4 +539,4 @@
 - 诊断：Agent 启动时，Desktop 从设备本地 `CodexTaskBinding.model` 覆盖普通模型配置，并把覆盖后的模型写入实际子进程和启动快照；但 Restart required 的 prospective 快照计算漏了 task binding 覆盖，持续拿普通 persona/instance 模型比较。只要二者不同（例如 `xhigh` 与 `high`），每次重启后的启动值仍会与比较值不同，徽标因此永久存在。此外，新增的 `allow_non_owner_dm` 环境设置此前没有纳入启动快照，无法正确报告这项配置变化。
 - 处理：summary 快照比较现在使用与启动相同的 task binding 模型覆盖；启动快照同时记录 `allow_non_owner_dm`，使该设置变更会提示重启、重启应用新值后差异清除。添加了 task 模型一致性和私聊权限漂移回归测试，并将新快照字段加入逐字段 diff 覆盖。
 - 验证：专门回归 `task_binding_model_is_used_by_spawn_and_restart_snapshots` 通过；相关快照测试 64 项通过。该测试集合另有 1 项既有 Windows 测试 `no_sentinel_reaches_the_owning_process_debug_output` 因无法启动占位进程（`program not found`）失败，非本次断言或实现导致。尚未在用户设备实测；不涉及 Relay。
-- 版本/提交：Buzz Codex Lab `0.5.22`，功能基线 `765e82c8`；发布构建使用本条修复及对应版本更新提交，安装包待本地构建。
+- 版本/提交：Buzz Codex Lab `0.5.22`，功能基线 `765e82c8`，发布准备提交 `26f310a7`；签名安装包 [Buzz-Codex-Lab_0.5.22_26f310a79efa_x64-setup.exe](D:/BuzzCodexLabRelease/Buzz-Codex-Lab_0.5.22_26f310a79efa_x64-setup.exe)，大小 `230420538` 字节，SHA-256 `0ac1cbcb8ac61ac55c6b4d9d2810622546118b4d92230434bdfaa7719360b958`；updater 签名已验证。
