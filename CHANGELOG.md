@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.22
+
+### Buzz Codex Lab
+
+- 修复 Codex task Agent 重启后仍持续显示 `Restart required` 的问题。
+- 启动状态比较现在会使用 task 绑定后的实际模型和推理等级，避免 `high`、`xhigh` 等配置差异造成永久误报。
+- 将跨用户私聊权限配置纳入启动快照，修改后会正确提示重启，重启应用新配置后提示会消失。
+
 ## v0.5.21
 
 ### Buzz Codex Lab

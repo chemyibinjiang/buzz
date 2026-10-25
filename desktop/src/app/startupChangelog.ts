@@ -8,6 +8,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const STARTUP_CHANGELOG: StartupChangelogEntry[] = [
   {
+    date: "2026-10-25",
+    items: [
+      "【主要更新】修复 Codex task Agent 重启后仍持续显示 Restart required 的问题。",
+      "启动状态比较现在会使用 task 绑定后的实际模型和推理等级，避免 high、xhigh 等配置差异造成永久误报。",
+      "跨用户私聊权限配置现在也会纳入启动快照，修改后会正确提示重启。",
+    ],
+  },
+  {
     date: "2026-10-21",
     items: [
       "【主要更新】同一账户现在可以在不同电脑间同步 Codex task Agent；导入后的 Agent 会统一显示在 Custom Agents，并保留所属设备与运行状态。",
